@@ -453,11 +453,15 @@ async def pick_clip_skip(update, context):
 
 async def reuse_prompt(update, context):
     query = update.callback_query
-    await query.answer()
     context_id = query.data.replace("reuse_prompt_", "")
     ctx = context.bot_data.get("_gen_context", {}).get(context_id)
     if ctx:
-        await query.message.reply_text(ctx["prompt"])
+        from config import DEFAULT_PROMPT_PREFIX
+        full_prompt = f"{DEFAULT_PROMPT_PREFIX} {ctx['translated']}"
+        await query.answer()
+        await query.message.reply_text(full_prompt)
+    else:
+        await query.answer("上下文已过期", show_alert=True)
 
 
 async def reuse_seed(update, context):

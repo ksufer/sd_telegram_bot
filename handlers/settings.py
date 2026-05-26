@@ -25,6 +25,21 @@ def _main_menu() -> tuple[str, InlineKeyboardMarkup]:
     return text, InlineKeyboardMarkup(keyboard)
 
 
+def _generation_menu(context_id: str) -> InlineKeyboardMarkup:
+    keyboard = [
+        [
+            InlineKeyboardButton("参数设置", callback_data="settings_menu"),
+            InlineKeyboardButton("关闭菜单", callback_data="close_menu"),
+        ],
+        [
+            InlineKeyboardButton("用本图提示词", callback_data=f"reuse_prompt_{context_id}"),
+            InlineKeyboardButton("用本图种子", callback_data=f"reuse_seed_{context_id}"),
+            InlineKeyboardButton("🎲", callback_data="random_seed"),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
 def _settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
     size_label = f"{settings['width']} × {settings['height']}"
     model_label = settings["model"] or "默认"
@@ -434,6 +449,40 @@ async def pick_clip_skip(update, context):
     await _reply_menu(query, text, markup)
 
 
+# ═══ 重用提示词/种子回调 ═══
+
+async def reuse_prompt(update, context):
+    query = update.callback_query
+    await query.answer()
+    context_id = query.data.replace("reuse_prompt_", "")
+    ctx = context.bot_data.get("_gen_context", {}).get(context_id)
+    if ctx:
+        await query.message.reply_text(ctx["prompt"])
+
+
+async def reuse_seed(update, context):
+    query = update.callback_query
+    context_id = query.data.replace("reuse_seed_", "")
+    ctx = context.bot_data.get("_gen_context", {}).get(context_id)
+    if ctx:
+        user_id = _get_user_id(update)
+        settings = _ensure_settings(context, user_id)
+        settings["seed"] = ctx["seed"]
+        _save_settings(context, user_id)
+        await query.answer(f"种子已设为 {ctx['seed']}")
+    else:
+        await query.answer("上下文已过期", show_alert=True)
+
+
+async def random_seed(update, context):
+    query = update.callback_query
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    settings["seed"] = -1
+    _save_settings(context, user_id)
+    await query.answer("种子已设为随机")
+
+
 def _ensure_settings(context, user_id: int) -> dict:
     if "settings" not in context.user_data:
         context.user_data["settings"] = storage.load(user_id, DEFAULT_USER_SETTINGS)
@@ -469,4 +518,7 @@ def get_handlers() -> list:
         CallbackQueryHandler(pick_clip_skip, pattern="^pick_clip_skip_"),
         CallbackQueryHandler(start_seed_input, pattern="^set_seed$"),
         CallbackQueryHandler(close_menu, pattern="^close_menu$"),
+        CallbackQueryHandler(reuse_prompt, pattern="^reuse_prompt_"),
+        CallbackQueryHandler(reuse_seed, pattern="^reuse_seed_"),
+        CallbackQueryHandler(random_seed, pattern="^random_seed$"),
     ]

@@ -3,10 +3,11 @@ import html
 import io
 import logging
 import time
+import uuid
 from dataclasses import dataclass
 
 from config import HIRES_FIX_PARAMS, LOG_FULL_PROMPT, DEFAULT_PROMPT_PREFIX
-from handlers.settings import _main_menu
+from handlers.settings import _generation_menu
 from services import sd_api
 from services.translator import translate
 
@@ -165,6 +166,14 @@ class GenerationQueue:
         if last_progress_task and not last_progress_task.done():
             last_progress_task.cancel()
 
+        context_id = uuid.uuid4().hex[:8]
+        if "_gen_context" not in self._app.bot_data:
+            self._app.bot_data["_gen_context"] = {}
+        self._app.bot_data["_gen_context"][context_id] = {
+            "prompt": task.prompt,
+            "seed": actual_seed,
+        }
+
         # 4. 发送图片
         await updater.set_stage("正在发送图片...")
         elapsed = time.monotonic() - start_time
@@ -186,7 +195,7 @@ class GenerationQueue:
             caption=info,
             parse_mode="HTML",
             reply_to_message_id=task.original_message_id,
-            reply_markup=_main_menu()[1],
+            reply_markup=_generation_menu(context_id),
         )
 
         # 5. 删除状态消息

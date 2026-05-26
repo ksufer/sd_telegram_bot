@@ -18,26 +18,35 @@ SD_API_BASE = os.getenv("SD_API_BASE", "http://10.126.126.1:7860")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 
 # ---- 默认生成参数 ----
-DEFAULT_NEGATIVE_PROMPT = "lowres, bad anatomy, bad hands, text, error, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry"
-DEFAULT_STEPS = 30
-DEFAULT_CFG_SCALE = 7
-DEFAULT_SAMPLER = "Euler a"
+DEFAULT_NEGATIVE_PROMPT = "worst quality,normal quality,anatomical nonsense,bad anatomy,interlocked fingers,extra fingers,watermark,simple background,transparent,low quality,logo,text,signature,lowres,(bad),bad hands,limb asymmetry,bad feet,text,error,fewer,extra,missing,worst quality,jpeg artifacts,low quality,watermark,unfinished,displeasing,oldest,early,chromatic aberration,signature,simple_background,artistic error,username,scan,[abstract],english text,"
+DEFAULT_CFG_SCALE = 5
+DEFAULT_SAMPLER = "DPM++ 2M SDE"
 
 # ---- 预置图片尺寸 ----
 SIZE_PRESETS = {
-    "512×768 (竖版)":    (512, 768),
-    "768×512 (横版)":    (768, 512),
-    "512×512 (方形)":    (512, 512),
-    "896×1152 (XL竖版)": (896, 1152),
-    "1152×896 (XL横版)": (1152, 896),
+    "1024×1024 (方形)":  (1024, 1024),
+    "1024 3:4 竖版": (896, 1152),
+    "1024 4:3 横版": (1152, 896),
+    "1024 2:3 竖版": (832, 1280),
+    "1024 3:2 横版": (1280, 832),
+    "1024 9:16 竖版": (768, 1344),
+    "1024 16:9 横版": (1344, 768),
+    "1280×1280 (方形)":  (1280, 1280),
+    "1280 3:4 竖版": (1088, 1472),
+    "1280 4:3 横版": (1472, 1088),
+    "1280 2:3 竖版": (1024, 1536),
+    "1280 3:2 横版": (1536, 1024),
+    "1280 9:16 竖版": (960, 1728),
+    "1280 16:9 横版": (1728, 960),
+
 }
 
 # ---- 高清修复预置参数 ----
 HIRES_FIX_PARAMS = {
-    "upscaler": "R-ESRGAN 4x+",
-    "upscale": 2.0,
-    "denoising_strength": 0.45,
-    "steps": 15,
+    "upscaler": "4x-UltraSharp",
+    "upscale": 1.5,
+    "denoising_strength": 0.3,
+    "steps": 20,
 }
 
 # ---- 采样器静态列表（API 获取失败时的回退）----
@@ -51,8 +60,8 @@ SAMPLER_PRESETS = [
 
 # ---- 用户设置默认值 ----
 DEFAULT_USER_SETTINGS = {
-    "width": 512,
-    "height": 768,
+    "width": 896,
+    "height": 1152,
     "model": None,
     "hires_fix": False,
     "seed": -1,
@@ -63,5 +72,5 @@ DEFAULT_USER_SETTINGS = {
     "sampler": DEFAULT_SAMPLER,
     "restore_faces": False,
     "tiling": False,
-    "clip_skip": 1,
+    "clip_skip": 2,
 }

@@ -170,7 +170,7 @@ class GenerationQueue:
         if "_gen_context" not in self._app.bot_data:
             self._app.bot_data["_gen_context"] = {}
         self._app.bot_data["_gen_context"][context_id] = {
-            "prompt": task.prompt,
+            "prompt": f"{DEFAULT_PROMPT_PREFIX} {translated}",
             "seed": actual_seed,
         }
 

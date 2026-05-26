@@ -1,6 +1,7 @@
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest
 from telegram.ext import CallbackQueryHandler, CommandHandler
 
 from config import SIZE_PRESETS, DEFAULT_USER_SETTINGS
@@ -201,6 +202,14 @@ def _cfg_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
     return text, InlineKeyboardMarkup(keyboard)
 
 
+async def _reply_menu(query, text: str, markup):
+    try:
+        await query.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
+    except BadRequest:
+        await query.answer()
+        await query.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
+
+
 # ═══ 回调处理 ═══
 
 async def show_main_menu(update, context):
@@ -217,7 +226,7 @@ async def show_settings(update, context):
     await query.answer()
     settings = _ensure_settings(context, _get_user_id(update))
     text, markup = _settings_menu(settings)
-    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+    await _reply_menu(query, text, markup)
 
 
 async def show_size_menu(update, context):
@@ -225,7 +234,7 @@ async def show_size_menu(update, context):
     await query.answer()
     settings = _ensure_settings(context, _get_user_id(update))
     text, markup = _size_menu(settings)
-    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+    await _reply_menu(query, text, markup)
 
 
 async def pick_size(update, context):
@@ -239,7 +248,7 @@ async def pick_size(update, context):
     _save_settings(context, user_id)
     await query.answer(f"已切换至 {w} × {h}")
     text, markup = _settings_menu(settings)
-    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+    await _reply_menu(query, text, markup)
 
 
 async def show_model_menu(update, context):
@@ -257,7 +266,7 @@ async def show_model_menu(update, context):
         )
         return
     text, markup = _model_menu(settings, models)
-    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+    await _reply_menu(query, text, markup)
 
 
 async def pick_model(update, context):
@@ -273,7 +282,7 @@ async def pick_model(update, context):
     except Exception:
         await query.answer("模型切换失败", show_alert=True)
     text, markup = _settings_menu(settings)
-    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+    await _reply_menu(query, text, markup)
 
 
 async def toggle_hires(update, context):
@@ -285,7 +294,7 @@ async def toggle_hires(update, context):
     state = "ON" if settings["hires_fix"] else "OFF"
     await query.answer(f"高清修复 · {state}")
     text, markup = _settings_menu(settings)
-    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+    await _reply_menu(query, text, markup)
 
 
 async def toggle_translate(update, context):
@@ -297,7 +306,7 @@ async def toggle_translate(update, context):
     state = "ON" if settings["translate"] else "OFF"
     await query.answer(f"中译英 · {state}")
     text, markup = _settings_menu(settings)
-    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+    await _reply_menu(query, text, markup)
 
 
 async def start_seed_input(update, context):
@@ -323,7 +332,7 @@ async def show_steps_menu(update, context):
     await query.answer()
     settings = _ensure_settings(context, _get_user_id(update))
     text, markup = _steps_menu(settings)
-    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+    await _reply_menu(query, text, markup)
 
 
 async def pick_steps(update, context):
@@ -335,7 +344,7 @@ async def pick_steps(update, context):
     _save_settings(context, user_id)
     await query.answer(f"Steps = {value}")
     text, markup = _settings_menu(settings)
-    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+    await _reply_menu(query, text, markup)
 
 
 async def show_cfg_menu(update, context):
@@ -343,7 +352,7 @@ async def show_cfg_menu(update, context):
     await query.answer()
     settings = _ensure_settings(context, _get_user_id(update))
     text, markup = _cfg_menu(settings)
-    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+    await _reply_menu(query, text, markup)
 
 
 async def pick_cfg(update, context):
@@ -355,7 +364,7 @@ async def pick_cfg(update, context):
     _save_settings(context, user_id)
     await query.answer(f"CFG = {value}")
     text, markup = _settings_menu(settings)
-    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+    await _reply_menu(query, text, markup)
 
 
 # ═══ 新参数回调 ═══
@@ -366,7 +375,7 @@ async def show_sampler_menu(update, context):
     settings = _ensure_settings(context, _get_user_id(update))
     samplers = await sd_api.get_samplers()
     text, markup = _sampler_menu(settings, samplers)
-    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+    await _reply_menu(query, text, markup)
 
 
 async def pick_sampler(update, context):
@@ -378,7 +387,7 @@ async def pick_sampler(update, context):
     _save_settings(context, user_id)
     await query.answer(f"采样器：{sampler_name}")
     text, markup = _settings_menu(settings)
-    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+    await _reply_menu(query, text, markup)
 
 
 async def toggle_restore_faces(update, context):
@@ -390,7 +399,7 @@ async def toggle_restore_faces(update, context):
     state = "ON" if settings["restore_faces"] else "OFF"
     await query.answer(f"面部修复 · {state}")
     text, markup = _settings_menu(settings)
-    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+    await _reply_menu(query, text, markup)
 
 
 async def toggle_tiling(update, context):
@@ -402,7 +411,7 @@ async def toggle_tiling(update, context):
     state = "ON" if settings["tiling"] else "OFF"
     await query.answer(f"平铺模式 · {state}")
     text, markup = _settings_menu(settings)
-    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+    await _reply_menu(query, text, markup)
 
 
 async def show_clip_skip_menu(update, context):
@@ -410,7 +419,7 @@ async def show_clip_skip_menu(update, context):
     await query.answer()
     settings = _ensure_settings(context, _get_user_id(update))
     text, markup = _clip_skip_menu(settings)
-    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+    await _reply_menu(query, text, markup)
 
 
 async def pick_clip_skip(update, context):
@@ -422,7 +431,7 @@ async def pick_clip_skip(update, context):
     _save_settings(context, user_id)
     await query.answer(f"CLIP Skip = {value}")
     text, markup = _settings_menu(settings)
-    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+    await _reply_menu(query, text, markup)
 
 
 def _ensure_settings(context, user_id: int) -> dict:

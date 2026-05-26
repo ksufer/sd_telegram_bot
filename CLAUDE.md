@@ -58,3 +58,49 @@ curl -s --connect-timeout 5 http://10.126.126.1:7860/sdapi/v1/sd-models
 ### 配置
 
 所有敏感信息通过 `.env` 加载（`python-dotenv`），常量集中在 `config.py`。`.env.example` 包含完整模板。`config.py` 中 `DEFAULT_USER_SETTINGS` 定义所有参数默认值，`SIZE_PRESETS` / `HIRES_FIX_PARAMS` 可按需增删。
+
+## 部署
+
+### 目标服务器
+
+- **地址**：`homelab`（SSH alias，实际 IP `10.126.126.3`）
+- **路径**：`/home/ksufer/homelab/stacks/sd-telegram-bot`
+- **管理工具**：Dockge（Docker Compose）
+- **代理**：`socks5://10.126.126.1:10808`（容器内访问宿主机代理）
+
+### 推送代码到服务器
+
+```bash
+# 同步源码（排除不需要的文件）
+rsync -avz \
+  --exclude '.git' --exclude '__pycache__' --exclude '.venv/' \
+  --exclude '.env' --exclude 'data/' --exclude 'logs/' \
+  --exclude '.codegraph/' --exclude '.claude/' --exclude 'docs/' \
+  --exclude '*.pyc' \
+  ./ homelab:/home/ksufer/homelab/stacks/sd-telegram-bot/
+```
+
+### 重建并启动容器
+
+```bash
+ssh homelab "cd /home/ksufer/homelab/stacks/sd-telegram-bot && docker compose up -d --build"
+```
+
+### 查看日志
+
+```bash
+ssh homelab "docker logs sd-telegram-bot --since 1m"
+```
+
+### 停止容器
+
+```bash
+ssh homelab "cd /home/ksufer/homelab/stacks/sd-telegram-bot && docker compose down"
+```
+
+### 注意事项
+
+- 服务器 `.env` 中的 `PROXY_URL` 应指向 `socks5://10.126.126.1:10808`（宿主机代理）
+- 容器内 `COPY . .` 有 layer cache，如果新文件没生效可能需要 `--no-cache` rebuild
+- 服务器上不要创建 `.venv/`（本地同步时要排除），容器内用 Dockerfile 独立构建
+- 代码同步后仅 `--build` 还不够，需要 `up -d --build` 才会重建容器

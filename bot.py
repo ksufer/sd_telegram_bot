@@ -3,11 +3,15 @@ import logging
 from telegram.ext import ApplicationBuilder
 from telegram.request import HTTPXRequest
 
-from config import TELEGRAM_TOKEN, PROXY_URL, LOG_LEVEL, LOG_DIR
+from config import (
+    TELEGRAM_TOKEN, PROXY_URL, LOG_LEVEL, LOG_DIR,
+    ALLOWED_USER_IDS, ALLOWED_CHAT_IDS, ADMIN_USER_ID,
+)
 from services.logger import setup_logging
 from services.queue import GenerationQueue
 from handlers import settings as settings_handler
 from handlers import generation as generation_handler
+from handlers import credits as credits_handler
 
 
 def main():
@@ -20,6 +24,13 @@ def main():
 
     if not PROXY_URL:
         logger.warning("未设置 PROXY_URL，可能无法连接 Telegram API")
+
+    if not ALLOWED_USER_IDS:
+        logger.warning("ALLOWED_USER_IDS 为空，当前 Bot 不限制用户访问")
+    if not ALLOWED_CHAT_IDS:
+        logger.warning("ALLOWED_CHAT_IDS 为空，当前 Bot 不限制群组访问")
+    if ADMIN_USER_ID:
+        logger.info("管理员用户 ID: %s", ADMIN_USER_ID)
 
     logger.info("Bot 启动中...")
 
@@ -47,6 +58,7 @@ def main():
 
     app.add_handlers(settings_handler.get_handlers())
     app.add_handlers(generation_handler.get_handlers())
+    app.add_handlers(credits_handler.get_handlers())
 
     logger.info("Bot 已启动，开始轮询")
     app.run_polling()

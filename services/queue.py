@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 from config import HIRES_FIX_PARAMS, LOG_FULL_PROMPT, DEFAULT_PROMPT_PREFIX
 from handlers.settings import _generation_menu
-from services import sd_api
+from services import sd_api, credits
 from services.translator import translate
 
 logger = logging.getLogger(__name__)
@@ -22,6 +22,8 @@ class GenerationTask:
     settings: dict
     status_message_id: int | None = None
     original_message_id: int | None = None
+    reply_to_message_id: int | None = None
+    credit_charged: bool = False
 
 
 class ThrottledProgressUpdater:
@@ -119,6 +121,12 @@ class GenerationQueue:
                         hint = f"生成失败: {error_text[:200]}"
                     logger.error("Worker 处理任务异常: %s", e, exc_info=True)
                     await self._update_status(task, hint)
+                    if task.credit_charged:
+                        try:
+                            await credits.refund_one(task.user_id)
+                            logger.info("已返还用户 %s 额度", task.user_id)
+                        except Exception:
+                            logger.error("返还用户 %s 额度失败", task.user_id, exc_info=True)
                 finally:
                     self._current_task = None
                     self._queue.task_done()
@@ -195,7 +203,7 @@ class GenerationQueue:
             photo=io.BytesIO(image_data),
             caption=info,
             parse_mode="HTML",
-            reply_to_message_id=task.original_message_id,
+            reply_to_message_id=task.reply_to_message_id or task.original_message_id,
             reply_markup=_generation_menu(context_id),
         )
 

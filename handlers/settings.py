@@ -6,6 +6,7 @@ from telegram.ext import CallbackQueryHandler, CommandHandler
 
 from config import SIZE_PRESETS, DEFAULT_USER_SETTINGS
 from services import sd_api, storage
+from handlers import _user_auth_filter, auth_callback
 
 logger = logging.getLogger(__name__)
 
@@ -501,28 +502,28 @@ def _save_settings(context, user_id: int) -> None:
 
 def get_handlers() -> list:
     return [
-        CommandHandler("start", show_main_menu),
-        CommandHandler("help", show_main_menu),
-        CallbackQueryHandler(show_settings, pattern="^settings_menu$|^settings_back$"),
-        CallbackQueryHandler(show_size_menu, pattern="^set_size$"),
-        CallbackQueryHandler(pick_size, pattern="^pick_size_"),
-        CallbackQueryHandler(show_model_menu, pattern="^set_model$"),
-        CallbackQueryHandler(pick_model, pattern="^pick_model_"),
-        CallbackQueryHandler(show_sampler_menu, pattern="^set_sampler$"),
-        CallbackQueryHandler(pick_sampler, pattern="^pick_sampler_"),
-        CallbackQueryHandler(toggle_hires, pattern="^toggle_hires$"),
-        CallbackQueryHandler(toggle_translate, pattern="^toggle_translate$"),
-        CallbackQueryHandler(toggle_restore_faces, pattern="^toggle_restore_faces$"),
-        CallbackQueryHandler(toggle_tiling, pattern="^toggle_tiling$"),
-        CallbackQueryHandler(show_steps_menu, pattern="^set_steps$"),
-        CallbackQueryHandler(pick_steps, pattern="^pick_steps_"),
-        CallbackQueryHandler(show_cfg_menu, pattern="^set_cfg$"),
-        CallbackQueryHandler(pick_cfg, pattern="^pick_cfg_"),
-        CallbackQueryHandler(show_clip_skip_menu, pattern="^set_clip_skip$"),
-        CallbackQueryHandler(pick_clip_skip, pattern="^pick_clip_skip_"),
-        CallbackQueryHandler(start_seed_input, pattern="^set_seed$"),
-        CallbackQueryHandler(close_menu, pattern="^close_menu$"),
-        CallbackQueryHandler(reuse_prompt, pattern="^reuse_prompt_"),
-        CallbackQueryHandler(reuse_seed, pattern="^reuse_seed_"),
-        CallbackQueryHandler(random_seed, pattern="^random_seed$"),
+        CommandHandler("start", show_main_menu, filters=_user_auth_filter()),
+        CommandHandler("help", show_main_menu, filters=_user_auth_filter()),
+        CallbackQueryHandler(auth_callback(show_settings), pattern="^settings_menu$|^settings_back$"),
+        CallbackQueryHandler(auth_callback(show_size_menu), pattern="^set_size$"),
+        CallbackQueryHandler(auth_callback(pick_size), pattern="^pick_size_"),
+        CallbackQueryHandler(auth_callback(show_model_menu), pattern="^set_model$"),
+        CallbackQueryHandler(auth_callback(pick_model), pattern="^pick_model_"),
+        CallbackQueryHandler(auth_callback(show_sampler_menu), pattern="^set_sampler$"),
+        CallbackQueryHandler(auth_callback(pick_sampler), pattern="^pick_sampler_"),
+        CallbackQueryHandler(auth_callback(toggle_hires), pattern="^toggle_hires$"),
+        CallbackQueryHandler(auth_callback(toggle_translate), pattern="^toggle_translate$"),
+        CallbackQueryHandler(auth_callback(toggle_restore_faces), pattern="^toggle_restore_faces$"),
+        CallbackQueryHandler(auth_callback(toggle_tiling), pattern="^toggle_tiling$"),
+        CallbackQueryHandler(auth_callback(show_steps_menu), pattern="^set_steps$"),
+        CallbackQueryHandler(auth_callback(pick_steps), pattern="^pick_steps_"),
+        CallbackQueryHandler(auth_callback(show_cfg_menu), pattern="^set_cfg$"),
+        CallbackQueryHandler(auth_callback(pick_cfg), pattern="^pick_cfg_"),
+        CallbackQueryHandler(auth_callback(show_clip_skip_menu), pattern="^set_clip_skip$"),
+        CallbackQueryHandler(auth_callback(pick_clip_skip), pattern="^pick_clip_skip_"),
+        CallbackQueryHandler(auth_callback(start_seed_input), pattern="^set_seed$"),
+        CallbackQueryHandler(auth_callback(close_menu), pattern="^close_menu$"),
+        CallbackQueryHandler(auth_callback(reuse_prompt), pattern="^reuse_prompt_"),
+        CallbackQueryHandler(auth_callback(reuse_seed), pattern="^reuse_seed_"),
+        CallbackQueryHandler(auth_callback(random_seed), pattern="^random_seed$"),
     ]

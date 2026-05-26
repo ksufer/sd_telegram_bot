@@ -60,6 +60,14 @@ SAMPLER_PRESETS = [
     "DDIM", "PLMS", "UniPC",
 ]
 
+# ---- 访问控制 ----
+ALLOWED_USER_IDS: list[int] = []
+ALLOWED_CHAT_IDS: list[int] = []
+ADMIN_USER_ID: int | None = None
+
+# ---- 额度系统 ----
+DEFAULT_CREDIT_QUOTA = 100
+
 # ---- 用户设置默认值 ----
 DEFAULT_USER_SETTINGS = {
     "width": 896,

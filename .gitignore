@@ -12,4 +12,8 @@ wheels/
 # 敏感配置
 .env
 
+# 运行时数据
+data/
+logs/
+
 docs-python-telegram-bot/

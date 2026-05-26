@@ -73,7 +73,13 @@ sudo systemctl enable --now sd-telegram-bot
 sudo systemctl status sd-telegram-bot
 ```
 
-查看日志：
+查看 Bot 自身日志：
+
+```bash
+tail -f /opt/sd_telegram_bot/logs/bot.log
+```
+
+systemd 日志：
 
 ```bash
 journalctl -u sd-telegram-bot -f
@@ -108,6 +114,19 @@ screen -r sd-bot
 | Bot → DeepSeek API | `api.deepseek.com` | 直连（公网，无需代理） |
 
 如果 SD WebUI 和 Bot 不在同一台机器上，确认网络可达且防火墙放行 7860 端口。
+
+## 数据目录
+
+Bot 运行时会自动创建以下目录：
+
+| 目录 | 内容 |
+|------|------|
+| `logs/` | 日志文件（`bot.log`，5MB 轮转，保留 3 个备份） |
+| `data/user_settings/` | 用户设置 JSON 文件（每用户一个文件） |
+
+## 进度显示说明
+
+Bot 通过 SD WebUI 的 `/sdapi/v1/progress` 端点获取生成进度。**该端点是 SD 后端的全局进度**。由于 Bot 使用串行队列，且预期独占 SD 后端，正常情况下进度显示准确。但如果通过 WebUI 或其他程序同时向同一 SD 后端提交任务，Bot 显示的进度可能反映其他任务的进度。
 
 ## 更新
 

@@ -3,6 +3,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# ---- 日志 ----
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+LOG_DIR = "logs"
+LOG_FULL_PROMPT = os.getenv("LOG_FULL_PROMPT", "false").lower() == "true"
+
 # ---- 敏感信息（从 .env 加载）----
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 PROXY_URL = os.getenv("PROXY_URL", "")
@@ -35,7 +40,16 @@ HIRES_FIX_PARAMS = {
     "steps": 15,
 }
 
-# ---- 用户设置默认值 (内存存储) ----
+# ---- 采样器静态列表（API 获取失败时的回退）----
+SAMPLER_PRESETS = [
+    "Euler a", "Euler", "LMS", "Heun", "DPM2", "DPM2 a",
+    "DPM++ 2M", "DPM++ SDE", "DPM++ 2M SDE", "DPM fast",
+    "DPM adaptive", "LMS Karras", "DPM2 Karras",
+    "DPM2 a Karras", "DPM++ 2M Karras", "DPM++ SDE Karras",
+    "DDIM", "PLMS", "UniPC",
+]
+
+# ---- 用户设置默认值 ----
 DEFAULT_USER_SETTINGS = {
     "width": 512,
     "height": 768,
@@ -47,4 +61,7 @@ DEFAULT_USER_SETTINGS = {
     "steps": DEFAULT_STEPS,
     "cfg_scale": DEFAULT_CFG_SCALE,
     "sampler": DEFAULT_SAMPLER,
+    "restore_faces": False,
+    "tiling": False,
+    "clip_skip": 1,
 }

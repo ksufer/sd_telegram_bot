@@ -1,7 +1,12 @@
+import logging
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackQueryHandler, CommandHandler
-from config import SIZE_PRESETS
-from services import sd_api
+
+from config import SIZE_PRESETS, DEFAULT_USER_SETTINGS
+from services import sd_api, storage
+
+logger = logging.getLogger(__name__)
 
 
 # ═══ 键盘构建 ═══
@@ -27,25 +32,37 @@ def _settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
 
     hires_icon = "已启用" if settings["hires_fix"] else "已关闭"
     translate_icon = "已启用" if settings["translate"] else "已关闭"
+    restore_icon = "已启用" if settings.get("restore_faces") else "已关闭"
+    tiling_icon = "已启用" if settings.get("tiling") else "已关闭"
     seed_label = str(settings["seed"]) if settings["seed"] != -1 else "随机"
+    sampler_label = settings.get("sampler", "Euler a")
+    clip_skip_label = str(settings.get("clip_skip", 1))
 
     text = (
         "<b>参数设置</b>\n"
         "━━━━━━━━━━━━━━\n"
-        f"   尺寸   <code>{size_label}</code>\n"
-        f"   模型   <code>{model_label}</code>\n"
+        f"   尺寸       <code>{size_label}</code>\n"
+        f"   模型       <code>{model_label}</code>\n"
+        f"   采样器     <code>{sampler_label}</code>\n"
         "━━━━━━━━━━━━━━\n"
         f"   高清修复   {hires_icon}\n"
-        f"   中译英       {translate_icon}\n"
-        f"   种子          <code>{seed_label}</code>\n"
-        f"   Steps       <code>{settings['steps']}</code>\n"
-        f"   CFG         <code>{settings['cfg_scale']}</code>"
+        f"   中译英     {translate_icon}\n"
+        f"   面部修复   {restore_icon}\n"
+        f"   平铺模式   {tiling_icon}\n"
+        f"   CLIP Skip  <code>{clip_skip_label}</code>\n"
+        f"   种子       <code>{seed_label}</code>\n"
+        f"   Steps      <code>{settings['steps']}</code>\n"
+        f"   CFG        <code>{settings['cfg_scale']}</code>"
     )
 
     keyboard = [
         [
             InlineKeyboardButton(" 尺寸", callback_data="set_size"),
             InlineKeyboardButton(" 模型", callback_data="set_model"),
+        ],
+        [
+            InlineKeyboardButton(" 采样器", callback_data="set_sampler"),
+            InlineKeyboardButton(" CLIP Skip", callback_data="set_clip_skip"),
         ],
         [
             InlineKeyboardButton(
@@ -57,6 +74,18 @@ def _settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
             InlineKeyboardButton(
                 f"{' 中译英 · ON' if settings['translate'] else ' 中译英 · OFF'}",
                 callback_data="toggle_translate",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                f"{' 面部修复 · ON' if settings.get('restore_faces') else ' 面部修复 · OFF'}",
+                callback_data="toggle_restore_faces",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                f"{' 平铺模式 · ON' if settings.get('tiling') else ' 平铺模式 · OFF'}",
+                callback_data="toggle_tiling",
             ),
         ],
         [
@@ -74,7 +103,7 @@ def _size_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
     keyboard = []
     for label, (w, h) in SIZE_PRESETS.items():
         active = settings["width"] == w and settings["height"] == h
-        prefix = "" if active else ""
+        prefix = "✓ " if active else ""
         btn_label = f"{prefix}{label}"
         keyboard.append([InlineKeyboardButton(btn_label, callback_data=f"pick_size_{w}x{h}")])
     keyboard.append([InlineKeyboardButton("返回", callback_data="settings_back")])
@@ -89,11 +118,47 @@ def _model_menu(settings: dict, models: list[dict]) -> tuple[str, InlineKeyboard
     for m in models:
         name = m["model_name"]
         active = current == name
-        prefix = "" if active else ""
+        prefix = "✓ " if active else ""
         display = name if len(name) <= 30 else name[:27] + "..."
         keyboard.append([InlineKeyboardButton(
             f"{prefix}{display}", callback_data=f"pick_model_{name}"
         )])
+    keyboard.append([InlineKeyboardButton("返回", callback_data="settings_back")])
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def _sampler_menu(settings: dict, samplers: list[str]) -> tuple[str, InlineKeyboardMarkup]:
+    current = settings.get("sampler", "Euler a")
+    text = f"<b> 选择采样器</b>\n当前：<code>{current}</code>"
+
+    keyboard = []
+    for name in samplers:
+        active = current == name
+        prefix = "✓ " if active else ""
+        display = name if len(name) <= 25 else name[:22] + "..."
+        keyboard.append([InlineKeyboardButton(
+            f"{prefix}{display}", callback_data=f"pick_sampler_{name}"
+        )])
+    keyboard.append([InlineKeyboardButton("返回", callback_data="settings_back")])
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def _clip_skip_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
+    current = settings.get("clip_skip", 1)
+    text = f"<b> CLIP Skip</b>\n当前：<code>{current}</code>\n值越大，提示词影响越强。"
+
+    keyboard = []
+    row = []
+    for v in range(1, 13):
+        prefix = "✓ " if current == v else ""
+        row.append(InlineKeyboardButton(
+            f"{prefix}{v}", callback_data=f"pick_clip_skip_{v}"
+        ))
+        if len(row) == 4:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
     keyboard.append([InlineKeyboardButton("返回", callback_data="settings_back")])
     return text, InlineKeyboardMarkup(keyboard)
 
@@ -105,10 +170,14 @@ async def show_main_menu(update, context):
     await update.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
 
 
+def _get_user_id(update) -> int:
+    return update.effective_user.id
+
+
 async def show_settings(update, context):
     query = update.callback_query
     await query.answer()
-    settings = _ensure_settings(context)
+    settings = _ensure_settings(context, _get_user_id(update))
     text, markup = _settings_menu(settings)
     await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
 
@@ -116,7 +185,7 @@ async def show_settings(update, context):
 async def show_size_menu(update, context):
     query = update.callback_query
     await query.answer()
-    settings = _ensure_settings(context)
+    settings = _ensure_settings(context, _get_user_id(update))
     text, markup = _size_menu(settings)
     await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
 
@@ -125,9 +194,11 @@ async def pick_size(update, context):
     query = update.callback_query
     data = query.data
     w, h = data.replace("pick_size_", "").split("x")
-    settings = _ensure_settings(context)
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
     settings["width"] = int(w)
     settings["height"] = int(h)
+    _save_settings(context, user_id)
     await query.answer(f"已切换至 {w} × {h}")
     text, markup = _settings_menu(settings)
     await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
@@ -136,7 +207,7 @@ async def pick_size(update, context):
 async def show_model_menu(update, context):
     query = update.callback_query
     await query.answer()
-    settings = _ensure_settings(context)
+    settings = _ensure_settings(context, _get_user_id(update))
     try:
         models = await sd_api.get_models()
     except Exception:
@@ -154,8 +225,10 @@ async def show_model_menu(update, context):
 async def pick_model(update, context):
     query = update.callback_query
     model_name = query.data.replace("pick_model_", "")
-    settings = _ensure_settings(context)
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
     settings["model"] = model_name
+    _save_settings(context, user_id)
     try:
         await sd_api.set_model(model_name)
         await query.answer(f"模型切换中：{model_name}")
@@ -167,8 +240,10 @@ async def pick_model(update, context):
 
 async def toggle_hires(update, context):
     query = update.callback_query
-    settings = _ensure_settings(context)
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
     settings["hires_fix"] = not settings["hires_fix"]
+    _save_settings(context, user_id)
     state = "ON" if settings["hires_fix"] else "OFF"
     await query.answer(f"高清修复 · {state}")
     text, markup = _settings_menu(settings)
@@ -177,8 +252,10 @@ async def toggle_hires(update, context):
 
 async def toggle_translate(update, context):
     query = update.callback_query
-    settings = _ensure_settings(context)
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
     settings["translate"] = not settings["translate"]
+    _save_settings(context, user_id)
     state = "ON" if settings["translate"] else "OFF"
     await query.answer(f"中译英 · {state}")
     text, markup = _settings_menu(settings)
@@ -201,14 +278,81 @@ async def close_menu(update, context):
     await query.delete_message()
 
 
-def _ensure_settings(context) -> dict:
-    return context.user_data.setdefault("settings", _default_settings())
+# ═══ 新参数回调 ═══
+
+async def show_sampler_menu(update, context):
+    query = update.callback_query
+    await query.answer()
+    settings = _ensure_settings(context, _get_user_id(update))
+    samplers = await sd_api.get_samplers()
+    text, markup = _sampler_menu(settings, samplers)
+    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
 
 
-def _default_settings() -> dict:
-    from config import DEFAULT_USER_SETTINGS
-    import copy
-    return copy.deepcopy(DEFAULT_USER_SETTINGS)
+async def pick_sampler(update, context):
+    query = update.callback_query
+    sampler_name = query.data.replace("pick_sampler_", "")
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    settings["sampler"] = sampler_name
+    _save_settings(context, user_id)
+    await query.answer(f"采样器：{sampler_name}")
+    text, markup = _settings_menu(settings)
+    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+
+
+async def toggle_restore_faces(update, context):
+    query = update.callback_query
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    settings["restore_faces"] = not settings.get("restore_faces", False)
+    _save_settings(context, user_id)
+    state = "ON" if settings["restore_faces"] else "OFF"
+    await query.answer(f"面部修复 · {state}")
+    text, markup = _settings_menu(settings)
+    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+
+
+async def toggle_tiling(update, context):
+    query = update.callback_query
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    settings["tiling"] = not settings.get("tiling", False)
+    _save_settings(context, user_id)
+    state = "ON" if settings["tiling"] else "OFF"
+    await query.answer(f"平铺模式 · {state}")
+    text, markup = _settings_menu(settings)
+    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+
+
+async def show_clip_skip_menu(update, context):
+    query = update.callback_query
+    await query.answer()
+    settings = _ensure_settings(context, _get_user_id(update))
+    text, markup = _clip_skip_menu(settings)
+    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+
+
+async def pick_clip_skip(update, context):
+    query = update.callback_query
+    value = int(query.data.replace("pick_clip_skip_", ""))
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    settings["clip_skip"] = value
+    _save_settings(context, user_id)
+    await query.answer(f"CLIP Skip = {value}")
+    text, markup = _settings_menu(settings)
+    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+
+
+def _ensure_settings(context, user_id: int) -> dict:
+    if "settings" not in context.user_data:
+        context.user_data["settings"] = storage.load(user_id, DEFAULT_USER_SETTINGS)
+    return context.user_data["settings"]
+
+
+def _save_settings(context, user_id: int) -> None:
+    storage.save(user_id, context.user_data.get("settings", {}))
 
 
 # ═══ Handler 注册 ═══
@@ -222,8 +366,14 @@ def get_handlers() -> list:
         CallbackQueryHandler(pick_size, pattern="^pick_size_"),
         CallbackQueryHandler(show_model_menu, pattern="^set_model$"),
         CallbackQueryHandler(pick_model, pattern="^pick_model_"),
+        CallbackQueryHandler(show_sampler_menu, pattern="^set_sampler$"),
+        CallbackQueryHandler(pick_sampler, pattern="^pick_sampler_"),
         CallbackQueryHandler(toggle_hires, pattern="^toggle_hires$"),
         CallbackQueryHandler(toggle_translate, pattern="^toggle_translate$"),
+        CallbackQueryHandler(toggle_restore_faces, pattern="^toggle_restore_faces$"),
+        CallbackQueryHandler(toggle_tiling, pattern="^toggle_tiling$"),
+        CallbackQueryHandler(show_clip_skip_menu, pattern="^set_clip_skip$"),
+        CallbackQueryHandler(pick_clip_skip, pattern="^pick_clip_skip_"),
         CallbackQueryHandler(start_seed_input, pattern="^set_seed$"),
         CallbackQueryHandler(close_menu, pattern="^close_menu$"),
     ]

@@ -1,41 +1,74 @@
-import io
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+import copy
+import logging
+
 from telegram.ext import MessageHandler, CommandHandler, filters
-from config import HIRES_FIX_PARAMS
-from services import sd_api
-from services.translator import translate
-from handlers.settings import _default_settings, _settings_menu, _ensure_settings, _main_menu
+
+from services.queue import GenerationTask
+from handlers.settings import _ensure_settings, _save_settings, _settings_menu
+
+logger = logging.getLogger(__name__)
 
 
 async def handle_text(update, context):
-    """处理用户文本消息：种子输入 或 图片生成。"""
     message = update.message
     text = message.text.strip()
 
-    # 如果在等待种子输入
+    # 种子输入处理
     if context.user_data.get("_waiting_seed"):
         await _handle_seed_input(update, context)
         return
 
-    # 否则走图片生成
-    await _handle_generation(update, context)
+    if len(text) > 1000:
+        await message.reply_text("提示词过长，请控制在 1000 字以内。")
+        return
 
+    user_id = update.effective_user.id
+    settings = _ensure_settings(context, user_id)
 
-async def handle_cancel(update, context):
-    """取消种子输入。"""
-    if context.user_data.get("_waiting_seed"):
-        context.user_data["_waiting_seed"] = False
-        settings = _ensure_settings(context)
-        await update.message.reply_text("已取消。")
-        txt, markup = _settings_menu(settings)
-        await update.message.reply_text(txt, reply_markup=markup, parse_mode="HTML")
+    try:
+        status_msg = await message.reply_text("准备中...")
+        status_id = status_msg.message_id
+    except Exception:
+        logger.warning("创建状态消息失败，任务将继续执行")
+        status_id = None
+
+    task = GenerationTask(
+        user_id=user_id,
+        chat_id=update.effective_chat.id,
+        prompt=text,
+        settings=copy.deepcopy(settings),
+        status_message_id=status_id,
+        original_message_id=message.message_id,
+    )
+
+    queue = context.bot_data["queue"]
+    ahead = await queue.enqueue(task)
+
+    if ahead == 0:
+        try:
+            if status_id is not None:
+                await context.bot.edit_message_text(
+                    "正在准备生成...",
+                    chat_id=update.effective_chat.id,
+                    message_id=status_id,
+                )
+        except Exception:
+            pass
     else:
-        await update.message.reply_text("当前没有需要取消的操作。")
+        try:
+            if status_id is not None:
+                await context.bot.edit_message_text(
+                    f"已加入队列，前方还有 {ahead} 个任务",
+                    chat_id=update.effective_chat.id,
+                    message_id=status_id,
+                )
+        except Exception:
+            pass
 
 
 async def _handle_seed_input(update, context):
-    """处理种子输入。"""
-    settings = _ensure_settings(context)
+    user_id = update.effective_user.id
+    settings = _ensure_settings(context, user_id)
     try:
         seed = int(update.message.text.strip())
         settings["seed"] = seed
@@ -44,88 +77,23 @@ async def _handle_seed_input(update, context):
         return
 
     context.user_data["_waiting_seed"] = False
+    _save_settings(context, user_id)
     label = "随机" if seed == -1 else str(seed)
     await update.message.reply_text(f"种子已设为: {label}")
     txt, markup = _settings_menu(settings)
     await update.message.reply_text(txt, reply_markup=markup, parse_mode="HTML")
 
 
-async def _handle_generation(update, context):
-    """核心生成流程。"""
-    message = update.message
-    prompt = message.text.strip()
-
-    if len(prompt) > 1000:
-        await message.reply_text("提示词过长，请控制在 1000 字以内。")
-        return
-
-    settings = _ensure_settings(context)
-    status_msg = await message.reply_text("正在生成...")
-
-    try:
-        if settings["translate"]:
-            translated = await translate(prompt)
-        else:
-            translated = prompt
-
-        if settings["model"]:
-            try:
-                await sd_api.set_model(settings["model"])
-            except Exception:
-                pass
-
-        payload = {
-            "prompt": translated,
-            "negative_prompt": settings["negative_prompt"],
-            "width": settings["width"],
-            "height": settings["height"],
-            "steps": settings["steps"],
-            "cfg_scale": settings["cfg_scale"],
-            "sampler_name": settings["sampler"],
-            "seed": settings["seed"],
-        }
-
-        if settings["hires_fix"]:
-            payload["enable_hr"] = True
-            payload["hr_upscaler"] = HIRES_FIX_PARAMS["upscaler"]
-            payload["hr_scale"] = HIRES_FIX_PARAMS["upscale"]
-            payload["denoising_strength"] = HIRES_FIX_PARAMS["denoising_strength"]
-            payload["hr_second_pass_steps"] = HIRES_FIX_PARAMS["steps"]
-
-        await status_msg.edit_text("正在生成（SD 处理中）...")
-
-        image_data = await sd_api.txt2img(payload)
-
-        await status_msg.edit_text("正在上传...")
-
-        info = (
-            f"<b>Prompt:</b> {translated[:200]}\n"
-            f"<b>Negative:</b> {settings['negative_prompt'][:100]}\n"
-            f"<b>Size:</b> {settings['width']}×{settings['height']}\n"
-            f"<b>Steps:</b> {settings['steps']} | <b>CFG:</b> {settings['cfg_scale']}\n"
-            f"<b>Hires Fix:</b> {'开' if settings['hires_fix'] else '关'}\n"
-            f"<b>Seed:</b> {settings['seed'] if settings['seed'] != -1 else '随机'}\n"
-            f"<b>模型:</b> {settings['model'] or '默认'}"
-        )
-
-        await message.reply_photo(
-            photo=io.BytesIO(image_data),
-            caption=info,
-            parse_mode="HTML",
-            reply_markup=_main_menu()[1],
-        )
-
-        await status_msg.delete()
-
-    except Exception as e:
-        error_text = str(e)
-        if "ConnectError" in error_text or "connect" in error_text.lower():
-            hint = "SD 服务不可用，请检查 10.126.126.1:7860 是否运行。"
-        elif "timeout" in error_text.lower() or "Timeout" in error_text:
-            hint = "生成超时，请尝试降低 Steps 或关闭高清修复。"
-        else:
-            hint = f"生成失败: {error_text[:200]}"
-        await status_msg.edit_text(hint)
+async def handle_cancel(update, context):
+    if context.user_data.get("_waiting_seed"):
+        context.user_data["_waiting_seed"] = False
+        user_id = update.effective_user.id
+        settings = _ensure_settings(context, user_id)
+        await update.message.reply_text("已取消。")
+        txt, markup = _settings_menu(settings)
+        await update.message.reply_text(txt, reply_markup=markup, parse_mode="HTML")
+    else:
+        await update.message.reply_text("当前没有需要取消的操作。")
 
 
 def get_handlers() -> list:

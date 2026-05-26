@@ -65,6 +65,10 @@ def _settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
             InlineKeyboardButton(" CLIP Skip", callback_data="set_clip_skip"),
         ],
         [
+            InlineKeyboardButton(" Steps", callback_data="set_steps"),
+            InlineKeyboardButton(" CFG", callback_data="set_cfg"),
+        ],
+        [
             InlineKeyboardButton(
                 f"{' 高清修复 · ON' if settings['hires_fix'] else ' 高清修复 · OFF'}",
                 callback_data="toggle_hires",
@@ -155,6 +159,40 @@ def _clip_skip_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
             f"{prefix}{v}", callback_data=f"pick_clip_skip_{v}"
         ))
         if len(row) == 4:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    keyboard.append([InlineKeyboardButton("返回", callback_data="settings_back")])
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def _steps_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
+    current = settings["steps"]
+    text = f"<b> Steps</b>\n当前：<code>{current}</code>"
+    keyboard = []
+    row = []
+    for v in [20, 25, 30, 35, 40]:
+        prefix = "✓ " if current == v else ""
+        row.append(InlineKeyboardButton(f"{prefix}{v}", callback_data=f"pick_steps_{v}"))
+        if len(row) == 3:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    keyboard.append([InlineKeyboardButton("返回", callback_data="settings_back")])
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def _cfg_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
+    current = settings["cfg_scale"]
+    text = f"<b> CFG Scale</b>\n当前：<code>{current}</code>"
+    keyboard = []
+    row = []
+    for v in [2, 3, 4, 5, 7, 9]:
+        prefix = "✓ " if current == v else ""
+        row.append(InlineKeyboardButton(f"{prefix}{v}", callback_data=f"pick_cfg_{v}"))
+        if len(row) == 3:
             keyboard.append(row)
             row = []
     if row:
@@ -278,6 +316,48 @@ async def close_menu(update, context):
     await query.delete_message()
 
 
+# ═══ Steps/CFG 回调 ═══
+
+async def show_steps_menu(update, context):
+    query = update.callback_query
+    await query.answer()
+    settings = _ensure_settings(context, _get_user_id(update))
+    text, markup = _steps_menu(settings)
+    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+
+
+async def pick_steps(update, context):
+    query = update.callback_query
+    value = int(query.data.replace("pick_steps_", ""))
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    settings["steps"] = value
+    _save_settings(context, user_id)
+    await query.answer(f"Steps = {value}")
+    text, markup = _settings_menu(settings)
+    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+
+
+async def show_cfg_menu(update, context):
+    query = update.callback_query
+    await query.answer()
+    settings = _ensure_settings(context, _get_user_id(update))
+    text, markup = _cfg_menu(settings)
+    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+
+
+async def pick_cfg(update, context):
+    query = update.callback_query
+    value = int(query.data.replace("pick_cfg_", ""))
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    settings["cfg_scale"] = value
+    _save_settings(context, user_id)
+    await query.answer(f"CFG = {value}")
+    text, markup = _settings_menu(settings)
+    await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+
+
 # ═══ 新参数回调 ═══
 
 async def show_sampler_menu(update, context):
@@ -372,6 +452,10 @@ def get_handlers() -> list:
         CallbackQueryHandler(toggle_translate, pattern="^toggle_translate$"),
         CallbackQueryHandler(toggle_restore_faces, pattern="^toggle_restore_faces$"),
         CallbackQueryHandler(toggle_tiling, pattern="^toggle_tiling$"),
+        CallbackQueryHandler(show_steps_menu, pattern="^set_steps$"),
+        CallbackQueryHandler(pick_steps, pattern="^pick_steps_"),
+        CallbackQueryHandler(show_cfg_menu, pattern="^set_cfg$"),
+        CallbackQueryHandler(pick_cfg, pattern="^pick_cfg_"),
         CallbackQueryHandler(show_clip_skip_menu, pattern="^set_clip_skip$"),
         CallbackQueryHandler(pick_clip_skip, pattern="^pick_clip_skip_"),
         CallbackQueryHandler(start_seed_input, pattern="^set_seed$"),

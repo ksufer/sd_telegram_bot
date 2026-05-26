@@ -18,7 +18,9 @@ SD_API_BASE = os.getenv("SD_API_BASE", "http://10.126.126.1:7860")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 
 # ---- 默认生成参数 ----
+DEFAULT_PROMPT_PREFIX = "masterpiece, best quality, amazing quality,"
 DEFAULT_NEGATIVE_PROMPT = "worst quality,normal quality,anatomical nonsense,bad anatomy,interlocked fingers,extra fingers,watermark,simple background,transparent,low quality,logo,text,signature,lowres,(bad),bad hands,limb asymmetry,bad feet,text,error,fewer,extra,missing,worst quality,jpeg artifacts,low quality,watermark,unfinished,displeasing,oldest,early,chromatic aberration,signature,simple_background,artistic error,username,scan,[abstract],english text,"
+DEFAULT_STEPS = 30
 DEFAULT_CFG_SCALE = 5
 DEFAULT_SAMPLER = "DPM++ 2M SDE"
 

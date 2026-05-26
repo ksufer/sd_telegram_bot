@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 import logging
 
 import httpx
@@ -55,7 +56,7 @@ async def get_progress() -> dict | None:
         return None
 
 
-async def txt2img(params: dict, progress_callback=None) -> bytes:
+async def txt2img(params: dict, progress_callback=None) -> tuple[bytes, int]:
     async with httpx.AsyncClient(timeout=180) as client:
         post_task = asyncio.create_task(
             client.post(f"{SD_API_BASE}/sdapi/v1/txt2img", json=params)
@@ -85,4 +86,16 @@ async def txt2img(params: dict, progress_callback=None) -> bytes:
         r.raise_for_status()
         data = r.json()
         img_base64 = data["images"][0]
-        return base64.b64decode(img_base64)
+        seed = _extract_seed(data, params.get("seed", -1))
+        return base64.b64decode(img_base64), seed
+
+
+def _extract_seed(data: dict, fallback: int) -> int:
+    try:
+        info_str = data.get("info", "")
+        if info_str:
+            info = json.loads(info_str)
+            return int(info.get("seed", fallback))
+    except (json.JSONDecodeError, KeyError, ValueError):
+        pass
+    return fallback

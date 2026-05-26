@@ -5,7 +5,8 @@ import logging
 import time
 from dataclasses import dataclass
 
-from config import HIRES_FIX_PARAMS, LOG_FULL_PROMPT
+from config import HIRES_FIX_PARAMS, LOG_FULL_PROMPT, DEFAULT_PROMPT_PREFIX
+from handlers.settings import _main_menu
 from services import sd_api
 from services.translator import translate
 
@@ -159,7 +160,7 @@ class GenerationQueue:
                 last_progress_task.cancel()
             last_progress_task = asyncio.create_task(updater.update_progress(ratio))
 
-        image_data = await sd_api.txt2img(payload, progress_callback=on_progress)
+        image_data, actual_seed = await sd_api.txt2img(payload, progress_callback=on_progress)
 
         if last_progress_task and not last_progress_task.done():
             last_progress_task.cancel()
@@ -169,13 +170,12 @@ class GenerationQueue:
         elapsed = time.monotonic() - start_time
 
         info = (
-            f"<b>Prompt:</b> {html.escape(translated[:200])}\n"
-            f"<b>Negative:</b> {html.escape(settings['negative_prompt'][:100])}\n"
+            f"<b>Prompt:</b> {html.escape(f'{DEFAULT_PROMPT_PREFIX} {translated}'[:200])}\n"
             f"<b>Size:</b> {settings['width']}x{settings['height']}\n"
             f"<b>Steps:</b> {settings['steps']} | <b>CFG:</b> {settings['cfg_scale']}\n"
             f"<b>Sampler:</b> {html.escape(settings['sampler'])}\n"
             f"<b>Hires Fix:</b> {'开' if settings['hires_fix'] else '关'}\n"
-            f"<b>Seed:</b> {settings['seed'] if settings['seed'] != -1 else '随机'}\n"
+            f"<b>Seed:</b> {actual_seed}\n"
             f"<b>模型:</b> {html.escape(settings['model'] or '默认')}\n"
             f"<b>耗时:</b> {elapsed:.1f}s"
         )
@@ -186,6 +186,7 @@ class GenerationQueue:
             caption=info,
             parse_mode="HTML",
             reply_to_message_id=task.original_message_id,
+            reply_markup=_main_menu()[1],
         )
 
         # 5. 删除状态消息
@@ -214,7 +215,7 @@ class GenerationQueue:
 
 def _build_payload(settings: dict, prompt: str) -> dict:
     payload = {
-        "prompt": prompt,
+        "prompt": f"{DEFAULT_PROMPT_PREFIX} {prompt}",
         "negative_prompt": settings["negative_prompt"],
         "width": settings["width"],
         "height": settings["height"],

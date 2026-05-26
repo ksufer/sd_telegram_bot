@@ -16,7 +16,7 @@ async def translate(text: str) -> str:
     """将中文提示词翻译为英文，失败时返回原文。"""
     try:
         response = await _client.chat.completions.create(
-            model="deepseek-chat",
+            model="deepseek-v4-flash",
             messages=[
                 {"role": "system", "content": TRANSLATE_PROMPT},
                 {"role": "user", "content": text},

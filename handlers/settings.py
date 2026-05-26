@@ -230,7 +230,10 @@ async def _reply_menu(query, text: str, markup):
 
 async def show_main_menu(update, context):
     text, markup = _main_menu()
-    await update.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
+    msg = update.effective_message
+    if msg is None:
+        return
+    await msg.reply_text(text, reply_markup=markup, parse_mode="HTML")
 
 
 def _get_user_id(update) -> int:

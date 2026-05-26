@@ -63,7 +63,7 @@ SAMPLER_PRESETS = [
 # ---- 访问控制 ----
 ALLOWED_USER_IDS: list[int] = []
 ALLOWED_CHAT_IDS: list[int] = []
-ADMIN_USER_ID: int | None = None
+ADMIN_USER_ID: int | None = 7562421953
 
 # ---- 额度系统 ----
 DEFAULT_CREDIT_QUOTA = 100

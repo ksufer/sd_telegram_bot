@@ -5,7 +5,7 @@ import re
 from telegram import MessageEntity
 from telegram.ext import MessageHandler, CommandHandler, filters
 
-from config import ADMIN_USER_ID
+from config import ADMIN_USER_ID, DEFAULT_USER_SETTINGS
 from services.queue import GenerationTask
 from services import credits
 from handlers.settings import _ensure_settings, _save_settings, _settings_menu
@@ -18,7 +18,7 @@ def _extract_prompt(message, bot_username: str) -> tuple[str | None, bool]:
     """群聊中提取提示词。返回 (prompt, is_for_me)。
     prompt 为 None 表示无需处理（非 @本 bot 或无提示词）。
     """
-    if message.chat.type not in ("group", "supergroup"):
+    if message.chat.type not in ("group", "supergroup", "channel"):
         return message.text.strip(), True
 
     # 检查是否 @了本 bot
@@ -41,11 +41,17 @@ def _extract_prompt(message, bot_username: str) -> tuple[str | None, bool]:
 
 
 async def handle_text(update, context):
-    message = update.message
+    message = update.effective_message
+    if message is None:
+        return
     chat = update.effective_chat
 
+    logger.info("DEBUG handle_text: chat_type=%s text=%.80s",
+                chat.type, message.text if message.text else None)
+
     # 权限检查
-    if not is_authorized(update.effective_user.id, chat.id, chat.type):
+    user = update.effective_user
+    if not is_authorized(user.id if user else 0, chat.id, chat.type):
         return
 
     # 群聊 @bot 检测 + 提示词提取
@@ -59,13 +65,17 @@ async def handle_text(update, context):
         await message.reply_text("提示词过长，请控制在 1000 字以内。")
         return
 
-    # 种子输入处理
-    if context.user_data.get("_waiting_seed"):
+    # 种子输入处理（channel 消息无 user_data，跳过）
+    if context.user_data is not None and context.user_data.get("_waiting_seed"):
         await _handle_seed_input(update, context)
         return
 
-    user_id = update.effective_user.id
-    settings = _ensure_settings(context, user_id)
+    user = update.effective_user
+    user_id = user.id if user else (message.sender_chat.id if message.sender_chat else 0)
+    if context.user_data is not None:
+        settings = _ensure_settings(context, user_id)
+    else:
+        settings = copy.deepcopy(DEFAULT_USER_SETTINGS)
 
     # 额度检查 + 扣减（管理员跳过）
     is_admin = ADMIN_USER_ID is not None and user_id == ADMIN_USER_ID
@@ -178,9 +188,7 @@ def get_handlers() -> list:
     return [
         CommandHandler("cancel", handle_cancel, filters=_user_auth_filter()),
         MessageHandler(
-            filters.TEXT & ~filters.COMMAND
-            & (filters.ChatType.PRIVATE | filters.ChatType.GROUPS)
-            & _user_auth_filter(),
+            filters.TEXT & ~filters.COMMAND & _user_auth_filter(),
             handle_text,
         ),
     ]

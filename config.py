@@ -75,7 +75,7 @@ DEFAULT_USER_SETTINGS = {
     "model": None,
     "hires_fix": False,
     "seed": -1,
-    "translate": False,
+    "translate": True,
     "negative_prompt": DEFAULT_NEGATIVE_PROMPT,
     "steps": DEFAULT_STEPS,
     "cfg_scale": DEFAULT_CFG_SCALE,

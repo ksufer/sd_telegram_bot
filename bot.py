@@ -34,7 +34,7 @@ def main():
 
     logger.info("Bot 启动中...")
 
-    request = HTTPXRequest(proxy=PROXY_URL) if PROXY_URL else None
+    request = HTTPXRequest(proxy=PROXY_URL, read_timeout=120, write_timeout=60, connect_timeout=10) if PROXY_URL else None
 
     builder = (
         ApplicationBuilder()

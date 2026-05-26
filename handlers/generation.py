@@ -61,10 +61,6 @@ async def handle_text(update, context):
             await message.reply_text("请在 @Bot 后输入提示词。")
         return
 
-    if len(prompt) > 1000:
-        await message.reply_text("提示词过长，请控制在 1000 字以内。")
-        return
-
     # 种子输入处理（channel 消息无 user_data，跳过）
     if context.user_data is not None and context.user_data.get("_waiting_seed"):
         await _handle_seed_input(update, context)
@@ -76,6 +72,9 @@ async def handle_text(update, context):
         settings = _ensure_settings(context, user_id)
     else:
         settings = copy.deepcopy(DEFAULT_USER_SETTINGS)
+
+    logger.info("DEBUG settings: user_id=%s translate=%s model=%s",
+                user_id, settings.get("translate"), settings.get("model"))
 
     # 额度检查 + 扣减（管理员跳过）
     is_admin = ADMIN_USER_ID is not None and user_id == ADMIN_USER_ID

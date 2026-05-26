@@ -121,12 +121,6 @@ class GenerationQueue:
                         hint = f"生成失败: {error_text[:200]}"
                     logger.error("Worker 处理任务异常: %s", e, exc_info=True)
                     await self._update_status(task, hint)
-                    if task.credit_charged:
-                        try:
-                            await credits.refund_one(task.user_id)
-                            logger.info("已返还用户 %s 额度", task.user_id)
-                        except Exception:
-                            logger.error("返还用户 %s 额度失败", task.user_id, exc_info=True)
                 finally:
                     self._current_task = None
                     self._queue.task_done()
@@ -142,37 +136,44 @@ class GenerationQueue:
             self._app, task.chat_id, task.status_message_id
         )
 
-        # 1. 翻译
-        if settings["translate"]:
-            await updater.set_stage("正在翻译提示词...")
-            translated = await translate(task.prompt)
-        else:
-            translated = task.prompt
+        # 1-3. 翻译 + 模型 + 生成（失败时返还额度）
+        try:
+            # 1. 翻译
+            if settings["translate"]:
+                await updater.set_stage("正在翻译提示词...")
+                translated = await translate(task.prompt)
+            else:
+                translated = task.prompt
 
-        # 2. 切换模型（在 worker 内串行执行）
-        if settings["model"]:
-            await updater.set_stage("正在切换模型...")
-            try:
-                await sd_api.set_model(settings["model"])
-            except Exception:
-                pass
+            # 2. 切换模型（在 worker 内串行执行）
+            if settings["model"]:
+                await updater.set_stage("正在切换模型...")
+                try:
+                    await sd_api.set_model(settings["model"])
+                except Exception:
+                    pass
 
-        # 3. 构建 payload 并生成（带进度轮询）
-        await updater.set_stage("正在生成：0%")
-        payload = _build_payload(settings, translated)
+            # 3. 构建 payload 并生成（带进度轮询）
+            await updater.set_stage("正在生成：0%")
+            payload = _build_payload(settings, translated)
 
-        last_progress_task = None
+            last_progress_task = None
 
-        def on_progress(ratio: float, _eta):
-            nonlocal last_progress_task
+            def on_progress(ratio: float, _eta):
+                nonlocal last_progress_task
+                if last_progress_task and not last_progress_task.done():
+                    last_progress_task.cancel()
+                last_progress_task = asyncio.create_task(updater.update_progress(ratio))
+
+            image_data, actual_seed = await sd_api.txt2img(payload, progress_callback=on_progress)
+
             if last_progress_task and not last_progress_task.done():
                 last_progress_task.cancel()
-            last_progress_task = asyncio.create_task(updater.update_progress(ratio))
 
-        image_data, actual_seed = await sd_api.txt2img(payload, progress_callback=on_progress)
-
-        if last_progress_task and not last_progress_task.done():
-            last_progress_task.cancel()
+        except Exception:
+            if task.credit_charged:
+                await credits.refund_one(task.user_id)
+            raise
 
         context_id = uuid.uuid4().hex[:8]
         if "_gen_context" not in self._app.bot_data:
@@ -188,7 +189,7 @@ class GenerationQueue:
         elapsed = time.monotonic() - start_time
 
         info = (
-            f"<b>Prompt:</b> {html.escape(f'{DEFAULT_PROMPT_PREFIX} {translated}'[:200])}\n"
+            f"<b>Prompt:</b> {html.escape(f'{DEFAULT_PROMPT_PREFIX} {translated}')}\n"
             f"<b>Size:</b> {settings['width']}x{settings['height']}\n"
             f"<b>Steps:</b> {settings['steps']} | <b>CFG:</b> {settings['cfg_scale']}\n"
             f"<b>Sampler:</b> {html.escape(settings['sampler'])}\n"

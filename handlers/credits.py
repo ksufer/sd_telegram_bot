@@ -47,9 +47,12 @@ def _extract_target_and_arg(update, context) -> tuple[int | None, int | None]:
 
 
 async def handle_credit(update, context):
-    message = update.message
+    message = update.effective_message
+    if message is None:
+        return
     chat = update.effective_chat
-    user_id = update.effective_user.id
+    user = update.effective_user
+    user_id = user.id if user else (message.sender_chat.id if message.sender_chat else 0)
 
     if not is_authorized(user_id, chat.id, chat.type):
         return

@@ -198,6 +198,11 @@ class GenerationQueue:
             f"<b>耗时:</b> {elapsed:.1f}s"
         )
 
+        # 非管理员显示剩余额度
+        if task.credit_charged:
+            remaining = await credits.get_remaining(task.user_id)
+            info += f"\n<b>剩余额度:</b> {remaining}"
+
         await self._app.bot.send_photo(
             chat_id=task.chat_id,
             photo=io.BytesIO(image_data),
@@ -232,8 +237,13 @@ class GenerationQueue:
 
 
 def _build_payload(settings: dict, prompt: str) -> dict:
+    # 如果提示词已包含默认前缀关键词，不再重复添加
+    quality_keywords = ["masterpiece", "best quality", "amazing quality"]
+    has_prefix = any(prompt.lower().startswith(kw) for kw in quality_keywords)
+    full_prompt = prompt if has_prefix else f"{DEFAULT_PROMPT_PREFIX} {prompt}"
+
     payload = {
-        "prompt": f"{DEFAULT_PROMPT_PREFIX} {prompt}",
+        "prompt": full_prompt,
         "negative_prompt": settings["negative_prompt"],
         "width": settings["width"],
         "height": settings["height"],

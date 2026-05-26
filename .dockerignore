@@ -1,0 +1,11 @@
+.venv
+__pycache__
+*.pyc
+data/
+logs/
+.env
+.git
+.gitignore
+.dockerignore
+docs-python-telegram-bot/
+*.md

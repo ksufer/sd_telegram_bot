@@ -1,0 +1,11 @@
+services:
+  sd-bot:
+    build: .
+    container_name: sd-telegram-bot
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs

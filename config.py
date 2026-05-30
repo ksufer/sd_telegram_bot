@@ -19,22 +19,50 @@ DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 
 # ---- ComfyUI API ----
 COMFY_API_BASE = os.getenv("COMFY_API_BASE", "http://10.126.126.4:8188")
-COMFY_WORKFLOW_PATH = os.getenv("COMFY_WORKFLOW_PATH", "data/zit-api.json")
-COMFY_POLL_INTERVAL = 2       # 轮询间隔（秒）
-COMFY_TIMEOUT = 300           # 生成超时（秒），含模型加载时间
-COMFY_MODEL_LOADER_CLASS = os.getenv("COMFY_MODEL_LOADER_CLASS", "UNETLoader")
-COMFY_DEFAULT_MODEL = os.getenv("COMFY_DEFAULT_MODEL", "moodyPornMix_zitV9.safetensors")
+COMFY_POLL_INTERVAL = 2
+COMFY_TIMEOUT = 300
+COMFY_DEFAULT_WORKFLOW = "z-image-turbo"
 
-# Workflow 节点 ID 和字段路径（基于 data/zit-api.json）
-COMFY_PROMPT_NODE_ID = "83:27"     # CLIPTextEncode
-COMFY_PROMPT_INPUT_KEY = "text"
-COMFY_SEED_NODE_ID = "83:3"        # KSampler
-COMFY_SEED_INPUT_KEY = "seed"
-COMFY_MODEL_NODE_ID = "83:28"      # UNETLoader
-COMFY_MODEL_INPUT_KEY = "unet_name"
-COMFY_LATENT_NODE_ID = "83:13"     # EmptySD3LatentImage
-COMFY_WIDTH_INPUT_KEY = "width"
-COMFY_HEIGHT_INPUT_KEY = "height"
+COMFY_WORKFLOWS = {
+    "z-image-turbo": {
+        "label": "Z-Image-Turbo（文生图）",
+        "path": os.getenv("COMFY_WORKFLOW_PATH", "data/zit-api.json"),
+        "is_img2img": False,
+        "prompt_node": "83:27",
+        "prompt_key": "text",
+        "seed_node": "83:3",
+        "seed_key": "seed",
+        "model_node": "83:28",
+        "model_key": "unet_name",
+        "model_loader_class": "UNETLoader",
+        "width_node": "83:13",
+        "width_key": "width",
+        "height_node": "83:13",
+        "height_key": "height",
+        "default_model": os.getenv("COMFY_DEFAULT_MODEL", "moodyPornMix_zitV9.safetensors"),
+    },
+    "image-to-real": {
+        "label": "Image-to-Real（图生图）",
+        "path": os.getenv("COMFY_IMG2IMG_WORKFLOW_PATH", "data/templates-image_to_real.json"),
+        "is_img2img": True,
+        "prompt_node": "17:8",
+        "prompt_key": "prompt",
+        "seed_node": "17:11",
+        "seed_key": "seed",
+        "model_node": "17:4",
+        "model_key": "unet_name",
+        "model_loader_class": "UNETLoader",
+        "load_image_node": "14",
+        "load_image_key": "image",
+        "default_model": "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+    },
+}
+
+# 兼容旧代码（从默认 workflow 取值）
+_COMFY_DEFAULT_WF = COMFY_WORKFLOWS[COMFY_DEFAULT_WORKFLOW]
+COMFY_WORKFLOW_PATH = _COMFY_DEFAULT_WF["path"]
+COMFY_MODEL_LOADER_CLASS = _COMFY_DEFAULT_WF["model_loader_class"]
+COMFY_DEFAULT_MODEL = _COMFY_DEFAULT_WF["default_model"]
 
 # ---- 默认生成参数 ----
 DEFAULT_PROMPT_PREFIX = "masterpiece, best quality, amazing quality,"
@@ -113,6 +141,7 @@ DEFAULT_USER_SETTINGS = {
     "tiling": False,
     "clip_skip": 2,
     # ComfyUI 专属设置
+    "comfy_workflow": COMFY_DEFAULT_WORKFLOW,
     "comfy_model": COMFY_DEFAULT_MODEL,
     "comfy_seed": -1,
     "comfy_width": 768,

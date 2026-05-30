@@ -5,7 +5,7 @@ import logging
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import CallbackQueryHandler
 
-from config import COMFY_SIZE_PRESETS, COMFY_DEFAULT_MODEL
+from config import COMFY_SIZE_PRESETS, COMFY_WORKFLOWS, COMFY_DEFAULT_WORKFLOW
 from handlers import auth_callback
 from handlers.settings import _ensure_settings, _save_settings
 from services import comfy_api
@@ -16,9 +16,9 @@ logger = logging.getLogger(__name__)
 # ═══ 菜单渲染 ═══
 
 def _comfy_settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
-    model = settings.get("comfy_model", COMFY_DEFAULT_MODEL)
-    width = settings.get("comfy_width", 768)
-    height = settings.get("comfy_height", 1280)
+    wf_key = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
+    wf_config = COMFY_WORKFLOWS.get(wf_key, COMFY_WORKFLOWS[COMFY_DEFAULT_WORKFLOW])
+    model = settings.get("comfy_model", wf_config.get("default_model", "?"))
     seed = settings.get("comfy_seed", -1)
     translate = settings.get("comfy_translate", False)
 
@@ -27,26 +27,51 @@ def _comfy_settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
 
     text = (
         f"<b>🎨 ComfyUI 设置</b>\n"
+        f"Workflow: {wf_config['label']}\n"
         f"模型: <code>{model}</code>\n"
-        f"尺寸: {width}×{height}\n"
         f"种子: {seed_label}\n"
         f"翻译: {translate_label}"
     )
 
     keyboard = [
+        [InlineKeyboardButton("切换 Workflow", callback_data="comfy_workflow")],
         [InlineKeyboardButton("切换模型", callback_data="comfy_model")],
-        [InlineKeyboardButton("切换尺寸", callback_data="comfy_size")],
         [
             InlineKeyboardButton("种子输入", callback_data="comfy_seed"),
             InlineKeyboardButton(f"翻译 · {translate_label}", callback_data="comfy_translate"),
         ],
-        [InlineKeyboardButton("关闭菜单", callback_data="close_menu")],
     ]
+
+    # 文生图 workflow 显示尺寸选项
+    if not wf_config.get("is_img2img"):
+        current_w = settings.get("comfy_width", 768)
+        current_h = settings.get("comfy_height", 1280)
+        text += f"\n尺寸: {current_w}×{current_h}"
+        keyboard.insert(1, [InlineKeyboardButton("切换尺寸", callback_data="comfy_size")])
+
+    keyboard.append([InlineKeyboardButton("关闭菜单", callback_data="close_menu")])
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def _comfy_workflow_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
+    current = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
+    text = f"<b>选择 Workflow</b>\n当前: {COMFY_WORKFLOWS.get(current, {}).get('label', current)}"
+
+    keyboard = []
+    for key, wf in COMFY_WORKFLOWS.items():
+        prefix = "✓ " if key == current else ""
+        keyboard.append([InlineKeyboardButton(
+            f"{prefix}{wf['label']}", callback_data=f"comfy_workflow:{key}"
+        )])
+
+    keyboard.append([InlineKeyboardButton("返回", callback_data="comfy_settings")])
     return text, InlineKeyboardMarkup(keyboard)
 
 
 def _comfy_model_menu(settings: dict, models: list[str]) -> tuple[str, InlineKeyboardMarkup]:
-    current = settings.get("comfy_model", COMFY_DEFAULT_MODEL)
+    wf_key = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
+    wf_config = COMFY_WORKFLOWS.get(wf_key, COMFY_WORKFLOWS[COMFY_DEFAULT_WORKFLOW])
+    current = settings.get("comfy_model", wf_config.get("default_model", "?"))
     text = f"<b>选择模型</b>\n当前: <code>{current}</code>"
 
     keyboard = []
@@ -115,7 +140,7 @@ async def show_comfy_model_menu(update, context):
     settings = _ensure_settings(context, user_id)
 
     try:
-        models = await comfy_api.get_models()
+        models = await comfy_api.get_models(settings)
     except Exception as e:
         logger.warning("获取 ComfyUI 模型列表失败: %s", e)
         await query.edit_message_text(
@@ -199,6 +224,37 @@ async def start_comfy_seed_input(update, context):
     )
 
 
+async def show_comfy_workflow_menu(update, context):
+    """显示 Workflow 选择菜单。"""
+    query = update.callback_query
+    await _safe_answer(query)
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    text, markup = _comfy_workflow_menu(settings)
+    await _reply_menu(query, text, markup)
+
+
+async def pick_comfy_workflow(update, context):
+    """选择 Workflow。"""
+    query = update.callback_query
+    wf_key = query.data.split(":", 1)[1]
+    if wf_key not in COMFY_WORKFLOWS:
+        await _safe_answer(query, "无效的 Workflow 选择", show_alert=True)
+        return
+
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    settings["comfy_workflow"] = wf_key
+    # 切换 workflow 时同时更新默认模型
+    wf_config = COMFY_WORKFLOWS[wf_key]
+    settings["comfy_model"] = wf_config.get("default_model", "")
+    _save_settings(context, user_id)
+
+    await _safe_answer(query, f"Workflow: {wf_config['label']}")
+    text, markup = _comfy_settings_menu(settings)
+    await _reply_menu(query, text, markup)
+
+
 async def toggle_comfy_translate(update, context):
     """切换 ComfyUI 翻译开关。"""
     query = update.callback_query
@@ -248,6 +304,8 @@ async def random_comfy_seed(update, context):
 def get_handlers() -> list:
     return [
         CallbackQueryHandler(auth_callback(show_comfy_settings), pattern=r"^comfy_settings$"),
+        CallbackQueryHandler(auth_callback(show_comfy_workflow_menu), pattern=r"^comfy_workflow$"),
+        CallbackQueryHandler(auth_callback(pick_comfy_workflow), pattern=r"^comfy_workflow:"),
         CallbackQueryHandler(auth_callback(show_comfy_model_menu), pattern=r"^comfy_model$"),
         CallbackQueryHandler(auth_callback(pick_comfy_model), pattern=r"^comfy_model:"),
         CallbackQueryHandler(auth_callback(show_comfy_size_menu), pattern=r"^comfy_size$"),

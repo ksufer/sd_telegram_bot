@@ -151,13 +151,16 @@ class GenerationQueue:
         try:
             backend = settings.get("backend", "sd")
 
-            # 1. 翻译（SD 和 ComfyUI 各自独立开关）
+            # 1. 翻译（SD 和 ComfyUI 各自独立开关；img2img 无文字 prompt 跳过）
             if backend == "comfyui":
                 translate_enabled = settings.get("comfy_translate", False)
             else:
                 translate_enabled = settings.get("translate", True)
 
-            if translate_enabled:
+            if backend == "comfyui" and settings.get("_uploaded_image"):
+                # 图生图模式：无文字 prompt，跳过翻译
+                translated = task.prompt
+            elif translate_enabled:
                 await updater.set_stage("正在翻译提示词...")
                 translated = await translate(task.prompt)
             else:
@@ -194,7 +197,10 @@ class GenerationQueue:
                 seed = int(settings.get("comfy_seed", -1))
                 if seed == -1:
                     seed = random.randint(0, 2**63 - 1)
-                image_data, actual_seed = await comfy_api.generate(translated, settings, seed)
+                uploaded_image = settings.get("_uploaded_image")
+                image_data, actual_seed = await comfy_api.generate(
+                    translated, settings, seed, uploaded_image=uploaded_image,
+                )
 
         except Exception:
             if task.credit_charged:

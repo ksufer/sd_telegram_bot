@@ -1,11 +1,12 @@
 import copy
+import io
 import logging
 import re
 
 from telegram import MessageEntity, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import MessageHandler, CommandHandler, CallbackQueryHandler, filters
 
-from config import ADMIN_USER_ID, DEFAULT_USER_SETTINGS
+from config import ADMIN_USER_ID, DEFAULT_USER_SETTINGS, COMFY_WORKFLOWS
 from services.network import retry_on_network_error
 from services.queue import GenerationTask
 from services import credits, comfy_api
@@ -290,11 +291,133 @@ async def handle_mode_callback(update, context):
         await query.edit_message_text(f"已切换为 {label} 模式。现在直接发送提示词即可生成图片。")
 
 
+async def handle_photo(update, context):
+    """ComfyUI 图生图模式：上传图片到 ComfyUI 并生成。"""
+    message = update.effective_message
+    if message is None or message.photo is None:
+        return
+    chat = update.effective_chat
+
+    user = update.effective_user
+    user_id = user.id if user else (message.sender_chat.id if message.sender_chat else 0)
+    if not is_authorized(user_id, chat.id, chat.type):
+        return
+
+    # 确认是 ComfyUI 模式且当前 workflow 是图生图
+    if context.user_data is not None:
+        settings = _ensure_settings(context, user_id)
+    else:
+        settings = copy.deepcopy(DEFAULT_USER_SETTINGS)
+
+    if settings.get("backend", "sd") != "comfyui":
+        return  # SD 模式不处理图片
+    wf_key = settings.get("comfy_workflow", "z-image-turbo")
+    wf_config = COMFY_WORKFLOWS.get(wf_key, {})
+    if not wf_config.get("is_img2img"):
+        return  # 文生图 workflow 不处理图片
+
+    # 额度检查
+    is_admin = ADMIN_USER_ID is not None and user_id == ADMIN_USER_ID
+    credit_charged = False
+    if not is_admin:
+        remaining = await credits.get_remaining(user_id)
+        if remaining <= 0:
+            stats = await credits.get_stats(user_id)
+            await message.reply_text(
+                f"额度已用完（已用 {stats['used']}/{stats['total_quota']}），请联系管理员增加额度。"
+            )
+            return
+        if not await credits.use_one(user_id):
+            await message.reply_text("额度扣减失败，请稍后重试。")
+            return
+        credit_charged = True
+
+    try:
+        status_msg = await retry_on_network_error(
+            lambda: message.reply_text("正在上传图片..."),
+            max_retries=2,
+        )
+        status_id = status_msg.message_id
+    except Exception:
+        logger.warning("创建状态消息失败")
+        status_id = None
+
+    # 下载 Telegram 图片
+    try:
+        photo_file = await message.photo[-1].get_file()
+        image_bytes = io.BytesIO()
+        await photo_file.download_to_memory(image_bytes)
+        image_bytes.seek(0)
+    except Exception as e:
+        logger.error("下载图片失败: %s", e)
+        if credit_charged:
+            await credits.refund_one(user_id)
+        await message.reply_text("下载图片失败，请稍后重试。")
+        return
+
+    # 上传到 ComfyUI
+    try:
+        if status_id is not None:
+            await retry_on_network_error(
+                lambda: context.bot.edit_message_text(
+                    "正在上传图片到 ComfyUI...", chat_id=chat.id, message_id=status_id,
+                ),
+                max_retries=2,
+            )
+        uploaded_name = await comfy_api.upload_image(image_bytes.read())
+    except Exception as e:
+        logger.error("上传图片到 ComfyUI 失败: %s", e)
+        if credit_charged:
+            await credits.refund_one(user_id)
+        await message.reply_text(f"上传图片失败: {e}")
+        return
+
+    # 创建任务并入队
+    task_settings = copy.deepcopy(settings)
+    task_settings["_uploaded_image"] = uploaded_name
+
+    task = GenerationTask(
+        user_id=user_id,
+        chat_id=chat.id,
+        prompt="",  # 图生图无文字 prompt
+        settings=task_settings,
+        status_message_id=status_id,
+        original_message_id=message.message_id,
+        reply_to_message_id=message.message_id if chat.type in ("group", "supergroup") else None,
+        credit_charged=credit_charged,
+    )
+
+    queue = context.bot_data["queue"]
+    try:
+        ahead = await queue.enqueue(task)
+    except Exception:
+        logger.error("用户 %s 入队失败", user_id, exc_info=True)
+        if credit_charged:
+            await credits.refund_one(user_id)
+        await message.reply_text("任务提交失败，请稍后重试。")
+        return
+
+    if ahead == 0 and status_id is not None:
+        try:
+            await retry_on_network_error(
+                lambda: context.bot.edit_message_text(
+                    "正在准备生成...", chat_id=chat.id, message_id=status_id,
+                ),
+                max_retries=2,
+            )
+        except Exception:
+            pass
+
+
 def get_handlers() -> list:
     return [
         CommandHandler("cancel", handle_cancel, filters=_user_auth_filter()),
         CommandHandler("mode", handle_mode, filters=_user_auth_filter()),
         CallbackQueryHandler(handle_mode_callback, pattern=r"^mode:"),
+        MessageHandler(
+            filters.PHOTO & _user_auth_filter(),
+            handle_photo,
+        ),
         MessageHandler(
             filters.TEXT & ~filters.COMMAND & _user_auth_filter(),
             handle_text,

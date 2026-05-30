@@ -67,7 +67,10 @@ async def handle_text(update, context):
     # 等待输入处理（种子等）— 必须在正常生成逻辑之前
     if context.user_data is not None:
         waiting = context.user_data.get("_waiting_input")
-        if waiting == "comfy_seed":
+        if waiting == "comfy_prompt":
+            await _handle_comfy_prompt_input(update, context)
+            return
+        elif waiting == "comfy_seed":
             await _handle_comfy_seed_input(update, context)
             return
         elif waiting == "sd_seed" or context.user_data.get("_waiting_seed"):
@@ -161,6 +164,23 @@ async def handle_text(update, context):
                 )
         except Exception:
             pass
+
+
+async def _handle_comfy_prompt_input(update, context):
+    text = update.message.text.strip()
+    if not text:
+        await update.message.reply_text("Prompt 不能为空，请重新输入。发送 /cancel 取消。")
+        return
+
+    user_id = update.effective_user.id
+    settings = _ensure_settings(context, user_id)
+    settings["comfy_prompt"] = text
+    context.user_data["_waiting_input"] = None
+    _save_settings(context, user_id)
+
+    await update.message.reply_text(f"Prompt 已设置: {text[:80]}{'...' if len(text) > 80 else ''}")
+    txt, markup = _comfy_settings_menu_shim(settings)
+    await update.message.reply_text(txt, reply_markup=markup, parse_mode="HTML")
 
 
 async def _handle_comfy_seed_input(update, context):

@@ -23,6 +23,8 @@ def _comfy_settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
     translate = settings.get("comfy_translate", False)
 
     seed_label = "随机" if seed == -1 else str(seed)
+    comfy_prompt = settings.get("comfy_prompt", "")
+    prompt_preview = comfy_prompt[:30] + "..." if comfy_prompt else "（使用默认）"
     translate_label = "ON" if translate else "OFF"
 
     text = (
@@ -30,7 +32,8 @@ def _comfy_settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
         f"Workflow: {wf_config['label']}\n"
         f"模型: <code>{model}</code>\n"
         f"种子: {seed_label}\n"
-        f"翻译: {translate_label}"
+        f"翻译: {translate_label}\n"
+        f"Prompt: {prompt_preview}"
     )
 
     keyboard = [
@@ -49,6 +52,7 @@ def _comfy_settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
         text += f"\n尺寸: {current_w}×{current_h}"
         keyboard.insert(1, [InlineKeyboardButton("切换尺寸", callback_data="comfy_size")])
 
+    keyboard.insert(-1, [InlineKeyboardButton("自定义 Prompt", callback_data="comfy_prompt")])
     keyboard.append([InlineKeyboardButton("关闭菜单", callback_data="close_menu")])
     return text, InlineKeyboardMarkup(keyboard)
 
@@ -255,6 +259,25 @@ async def pick_comfy_workflow(update, context):
     await _reply_menu(query, text, markup)
 
 
+async def start_comfy_prompt_input(update, context):
+    """进入自定义 Prompt 输入模式。"""
+    query = update.callback_query
+    await _safe_answer(query)
+
+    if context.user_data is None:
+        await query.edit_message_text("当前不支持自定义 Prompt。")
+        return
+
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    current = settings.get("comfy_prompt", "")
+    hint = f"当前: {current[:100]}" if current else "当前使用 workflow 默认 prompt"
+    context.user_data["_waiting_input"] = "comfy_prompt"
+    await query.edit_message_text(
+        f"请输入自定义 Prompt（发送 /cancel 取消）\n{hint}"
+    )
+
+
 async def toggle_comfy_translate(update, context):
     """切换 ComfyUI 翻译开关。"""
     query = update.callback_query
@@ -311,6 +334,7 @@ def get_handlers() -> list:
         CallbackQueryHandler(auth_callback(show_comfy_size_menu), pattern=r"^comfy_size$"),
         CallbackQueryHandler(auth_callback(pick_comfy_size), pattern=r"^comfy_size:"),
         CallbackQueryHandler(auth_callback(start_comfy_seed_input), pattern=r"^comfy_seed$"),
+        CallbackQueryHandler(auth_callback(start_comfy_prompt_input), pattern=r"^comfy_prompt$"),
         CallbackQueryHandler(auth_callback(toggle_comfy_translate), pattern=r"^comfy_translate$"),
         CallbackQueryHandler(auth_callback(reuse_comfy_seed), pattern=r"^comfy_reuse_seed_"),
         CallbackQueryHandler(auth_callback(random_comfy_seed), pattern=r"^comfy_random_seed$"),

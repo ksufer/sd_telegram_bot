@@ -72,8 +72,10 @@ def _build_payload(workflow: dict, prompt: str, seed: int, settings: dict,
                    uploaded_image: str | None = None) -> dict:
     """根据 workflow 配置替换 prompt、seed、模型、分辨率等节点。"""
     wf = _get_wf_config(settings)
-    if prompt:  # 非空才设置 prompt（img2img 保留 workflow 默认 prompt）
-        _set_node_input(workflow, wf["prompt_node"], wf["prompt_key"], prompt)
+    # 优先用用户自定义 prompt，否则用传入的 prompt（文生图=用户输入，图生图=空→保留默认）
+    final_prompt = settings.get("comfy_prompt", "") or prompt
+    if final_prompt:
+        _set_node_input(workflow, wf["prompt_node"], wf["prompt_key"], final_prompt)
     _set_node_input(workflow, wf["seed_node"], wf["seed_key"], seed)
     _set_node_input(workflow, wf["model_node"], wf["model_key"],
                     settings.get("comfy_model", wf.get("default_model", "")))

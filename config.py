@@ -147,4 +147,5 @@ DEFAULT_USER_SETTINGS = {
     "comfy_width": 768,
     "comfy_height": 1280,
     "comfy_translate": False,
+    "comfy_prompt": "",  # 空 = 使用 workflow 默认 prompt
 }

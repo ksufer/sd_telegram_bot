@@ -7,6 +7,8 @@ import time
 import uuid
 from dataclasses import dataclass
 
+from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+
 from config import HIRES_FIX_PARAMS, LOG_FULL_PROMPT, DEFAULT_PROMPT_PREFIX
 from handlers.settings import _generation_menu
 from services import sd_api, comfy_api, credits
@@ -147,15 +149,22 @@ class GenerationQueue:
 
         # 1-3. 翻译 + 模型 + 生成（失败时返还额度）
         try:
-            # 1. 翻译
-            if settings["translate"]:
+            backend = settings.get("backend", "sd")
+
+            # 1. 翻译（SD 和 ComfyUI 各自独立开关）
+            if backend == "comfyui":
+                translate_enabled = settings.get("comfy_translate", False)
+            else:
+                translate_enabled = settings.get("translate", True)
+
+            if translate_enabled:
                 await updater.set_stage("正在翻译提示词...")
                 translated = await translate(task.prompt)
             else:
                 translated = task.prompt
 
             # 2. 切换模型（仅在 SD 模式下）
-            if settings.get("backend", "sd") == "sd" and settings["model"]:
+            if backend == "sd" and settings["model"]:
                 await updater.set_stage("正在切换模型...")
                 try:
                     await sd_api.set_model(settings["model"])
@@ -163,7 +172,7 @@ class GenerationQueue:
                     pass
 
             # 3. 构建 payload 并生成（带进度轮询）
-            if settings.get("backend", "sd") == "sd":
+            if backend == "sd":
                 await updater.set_stage("正在生成：0%")
                 payload = _build_payload(settings, translated)
 
@@ -182,10 +191,10 @@ class GenerationQueue:
             else:
                 # ComfyUI 路径
                 await updater.set_stage("正在生成（ComfyUI）...")
-                seed = int(settings.get("seed", -1))
+                seed = int(settings.get("comfy_seed", -1))
                 if seed == -1:
                     seed = random.randint(0, 2**63 - 1)
-                image_data, actual_seed = await comfy_api.generate(translated, seed)
+                image_data, actual_seed = await comfy_api.generate(translated, settings, seed)
 
         except Exception:
             if task.credit_charged:
@@ -205,10 +214,12 @@ class GenerationQueue:
         await updater.set_stage("正在发送图片...")
         elapsed = time.monotonic() - start_time
 
-        if settings.get("backend", "sd") == "sd":
+        if backend == "sd":
             info = _build_sd_info(settings, translated, actual_seed, elapsed)
+            reply_markup = _generation_menu(context_id)
         else:
-            info = _build_comfy_info(task, translated, actual_seed, elapsed)
+            info = _build_comfy_info(task, settings, translated, actual_seed, elapsed)
+            reply_markup = _comfy_generation_menu(context_id)
 
         # 非管理员显示剩余额度
         if task.credit_charged:
@@ -223,7 +234,7 @@ class GenerationQueue:
                     caption=info,
                     parse_mode="HTML",
                     reply_to_message_id=task.reply_to_message_id or task.original_message_id,
-                    reply_markup=_generation_menu(context_id),
+                    reply_markup=reply_markup,
                 ),
                 on_retry=lambda attempt, max_retries: updater.set_stage(
                     f"图片发送失败，正在重试 ({attempt}/{max_retries})..."
@@ -317,19 +328,32 @@ def _build_sd_info(settings: dict, translated: str, seed: int, elapsed: float) -
     )
 
 
-def _build_comfy_info(task, translated: str, seed: int, elapsed: float) -> str:
+def _build_comfy_info(task, settings: dict, translated: str, seed: int, elapsed: float) -> str:
     actual = html.escape(translated)
+    model = html.escape(settings.get("comfy_model", "?"))
+    size = f"{settings.get('comfy_width', '?')}×{settings.get('comfy_height', '?')}"
+    info_parts = [
+        f"<b>模型:</b> {model}",
+        f"<b>尺寸:</b> {size}",
+        f"<b>Seed:</b> {seed}",
+        f"<b>耗时:</b> {elapsed:.1f}s",
+    ]
     if translated == task.prompt:
-        return (
-            f"<b>Prompt:</b> {actual}\n"
-            f"<b>Seed:</b> {seed}\n"
-            f"<b>后端:</b> ComfyUI\n"
-            f"<b>耗时:</b> {elapsed:.1f}s"
-        )
-    return (
-        f"<b>原始 Prompt:</b> {html.escape(task.prompt)}\n"
-        f"<b>实际 Prompt:</b> {actual}\n"
-        f"<b>Seed:</b> {seed}\n"
-        f"<b>后端:</b> ComfyUI\n"
-        f"<b>耗时:</b> {elapsed:.1f}s"
-    )
+        info_parts.insert(0, f"<b>Prompt:</b> {actual}")
+    else:
+        info_parts.insert(0, f"<b>实际 Prompt:</b> {actual}")
+        info_parts.insert(0, f"<b>原始 Prompt:</b> {html.escape(task.prompt)}")
+    return "\n".join(info_parts)
+
+
+def _comfy_generation_menu(context_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔁 复用本次 Seed", callback_data=f"comfy_reuse_seed_{context_id}"),
+            InlineKeyboardButton("🎲 随机 Seed", callback_data="comfy_random_seed"),
+        ],
+        [
+            InlineKeyboardButton("⚙️ ComfyUI 设置", callback_data="comfy_settings"),
+            InlineKeyboardButton("关闭菜单", callback_data="close_menu"),
+        ],
+    ])

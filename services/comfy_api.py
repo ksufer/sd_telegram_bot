@@ -9,11 +9,18 @@ import httpx
 
 from config import (
     COMFY_API_BASE,
+    COMFY_DEFAULT_MODEL,
     COMFY_WORKFLOW_PATH,
+    COMFY_MODEL_LOADER_CLASS,
     COMFY_PROMPT_NODE_ID,
     COMFY_PROMPT_INPUT_KEY,
     COMFY_SEED_NODE_ID,
     COMFY_SEED_INPUT_KEY,
+    COMFY_MODEL_NODE_ID,
+    COMFY_MODEL_INPUT_KEY,
+    COMFY_LATENT_NODE_ID,
+    COMFY_WIDTH_INPUT_KEY,
+    COMFY_HEIGHT_INPUT_KEY,
     COMFY_POLL_INTERVAL,
     COMFY_TIMEOUT,
 )
@@ -65,10 +72,16 @@ def _load_workflow() -> dict:
     return copy.deepcopy(_workflow_cache)
 
 
-def _build_payload(workflow: dict, prompt: str, seed: int) -> dict:
-    """替换 workflow 中的 prompt 文本和 seed 值。"""
+def _build_payload(workflow: dict, prompt: str, seed: int, settings: dict) -> dict:
+    """替换 workflow 中的 prompt、seed、模型、分辨率。"""
     _set_node_input(workflow, COMFY_PROMPT_NODE_ID, COMFY_PROMPT_INPUT_KEY, prompt)
     _set_node_input(workflow, COMFY_SEED_NODE_ID, COMFY_SEED_INPUT_KEY, seed)
+    _set_node_input(workflow, COMFY_MODEL_NODE_ID, COMFY_MODEL_INPUT_KEY,
+                    settings.get("comfy_model", COMFY_DEFAULT_MODEL))
+    _set_node_input(workflow, COMFY_LATENT_NODE_ID, COMFY_WIDTH_INPUT_KEY,
+                    settings.get("comfy_width", 768))
+    _set_node_input(workflow, COMFY_LATENT_NODE_ID, COMFY_HEIGHT_INPUT_KEY,
+                    settings.get("comfy_height", 1280))
     return workflow
 
 
@@ -77,7 +90,23 @@ def validate_workflow() -> None:
     workflow = _load_workflow()
     _set_node_input(workflow, COMFY_PROMPT_NODE_ID, COMFY_PROMPT_INPUT_KEY, "test")
     _set_node_input(workflow, COMFY_SEED_NODE_ID, COMFY_SEED_INPUT_KEY, 1)
+    _set_node_input(workflow, COMFY_MODEL_NODE_ID, COMFY_MODEL_INPUT_KEY, COMFY_DEFAULT_MODEL)
+    _set_node_input(workflow, COMFY_LATENT_NODE_ID, COMFY_WIDTH_INPUT_KEY, 768)
+    _set_node_input(workflow, COMFY_LATENT_NODE_ID, COMFY_HEIGHT_INPUT_KEY, 1280)
     logger.info("ComfyUI workflow 校验通过")
+
+
+async def get_models() -> list[str]:
+    """从 /object_info 获取可用模型列表（字段使用 COMFY_MODEL_INPUT_KEY）。"""
+    url = f"/object_info/{COMFY_MODEL_LOADER_CLASS}"
+    async with httpx.AsyncClient(base_url=COMFY_API_BASE, timeout=10) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        data = resp.json()
+    node_info = data.get(COMFY_MODEL_LOADER_CLASS, {})
+    required = node_info.get("input", {}).get("required", {})
+    models = required.get(COMFY_MODEL_INPUT_KEY, [[]])[0]
+    return models if isinstance(models, list) else []
 
 
 # ── API 调用 ──────────────────────────────────────────────
@@ -148,9 +177,9 @@ async def _download_image(
 
 # ── 对外入口 ──────────────────────────────────────────────
 
-async def generate(prompt: str, seed: int) -> tuple[bytes, int]:
+async def generate(prompt: str, settings: dict, seed: int) -> tuple[bytes, int]:
     workflow = _load_workflow()
-    payload = _build_payload(workflow, prompt, seed)
+    payload = _build_payload(workflow, prompt, seed, settings)
     timeout = httpx.Timeout(connect=10, read=COMFY_TIMEOUT, write=30, pool=10)
     async with httpx.AsyncClient(base_url=COMFY_API_BASE, timeout=timeout) as client:
         prompt_id = await _submit_prompt(client, payload)

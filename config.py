@@ -22,12 +22,19 @@ COMFY_API_BASE = os.getenv("COMFY_API_BASE", "http://10.126.126.4:8188")
 COMFY_WORKFLOW_PATH = os.getenv("COMFY_WORKFLOW_PATH", "data/zit-api.json")
 COMFY_POLL_INTERVAL = 2       # 轮询间隔（秒）
 COMFY_TIMEOUT = 300           # 生成超时（秒），含模型加载时间
+COMFY_MODEL_LOADER_CLASS = os.getenv("COMFY_MODEL_LOADER_CLASS", "UNETLoader")
+COMFY_DEFAULT_MODEL = os.getenv("COMFY_DEFAULT_MODEL", "moodyPornMix_zitV9.safetensors")
 
 # Workflow 节点 ID 和字段路径（基于 data/zit-api.json）
 COMFY_PROMPT_NODE_ID = "83:27"     # CLIPTextEncode
 COMFY_PROMPT_INPUT_KEY = "text"
 COMFY_SEED_NODE_ID = "83:3"        # KSampler
 COMFY_SEED_INPUT_KEY = "seed"
+COMFY_MODEL_NODE_ID = "83:28"      # UNETLoader
+COMFY_MODEL_INPUT_KEY = "unet_name"
+COMFY_LATENT_NODE_ID = "83:13"     # EmptySD3LatentImage
+COMFY_WIDTH_INPUT_KEY = "width"
+COMFY_HEIGHT_INPUT_KEY = "height"
 
 # ---- 默认生成参数 ----
 DEFAULT_PROMPT_PREFIX = "masterpiece, best quality, amazing quality,"
@@ -53,6 +60,15 @@ SIZE_PRESETS = {
     "1280 9:16 竖版": (960, 1728),
     "1280 16:9 横版": (1728, 960),
 
+}
+
+# ---- ComfyUI 预置图片尺寸（key 用于 callback data，无特殊字符）----
+COMFY_SIZE_PRESETS = {
+    "768x1280":  {"label": "768×1280（竖版）", "width": 768,  "height": 1280},
+    "1280x768":  {"label": "1280×768（横版）", "width": 1280, "height": 768},
+    "1024x1024": {"label": "1024×1024（方形）", "width": 1024, "height": 1024},
+    "896x1152":  {"label": "896×1152（3:4）",  "width": 896,  "height": 1152},
+    "1152x896":  {"label": "1152×896（4:3）",  "width": 1152, "height": 896},
 }
 
 # ---- 高清修复预置参数 ----
@@ -96,4 +112,10 @@ DEFAULT_USER_SETTINGS = {
     "restore_faces": False,
     "tiling": False,
     "clip_skip": 2,
+    # ComfyUI 专属设置
+    "comfy_model": COMFY_DEFAULT_MODEL,
+    "comfy_seed": -1,
+    "comfy_width": 768,
+    "comfy_height": 1280,
+    "comfy_translate": False,
 }

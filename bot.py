@@ -12,6 +12,7 @@ from services.queue import GenerationQueue
 from handlers import settings as settings_handler
 from handlers import generation as generation_handler
 from handlers import credits as credits_handler
+from handlers import comfy_settings as comfy_settings_handler
 
 
 def main():
@@ -59,6 +60,7 @@ def main():
     app.add_handlers(settings_handler.get_handlers())
     app.add_handlers(generation_handler.get_handlers())
     app.add_handlers(credits_handler.get_handlers())
+    app.add_handlers(comfy_settings_handler.get_handlers())
 
     logger.info("Bot 已启动，开始轮询")
     app.run_polling()

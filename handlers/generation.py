@@ -11,6 +11,7 @@ from services.queue import GenerationTask
 from services import credits, comfy_api
 from handlers.settings import _ensure_settings, _save_settings, _settings_menu
 from handlers import is_authorized, _user_auth_filter
+from handlers.comfy_settings import _comfy_settings_menu as _comfy_settings_menu_shim
 
 logger = logging.getLogger(__name__)
 
@@ -62,10 +63,15 @@ async def handle_text(update, context):
             await message.reply_text("请在 @Bot 后输入提示词。")
         return
 
-    # 种子输入处理（channel 消息无 user_data，跳过）
-    if context.user_data is not None and context.user_data.get("_waiting_seed"):
-        await _handle_seed_input(update, context)
-        return
+    # 等待输入处理（种子等）— 必须在正常生成逻辑之前
+    if context.user_data is not None:
+        waiting = context.user_data.get("_waiting_input")
+        if waiting == "comfy_seed":
+            await _handle_comfy_seed_input(update, context)
+            return
+        elif waiting == "sd_seed" or context.user_data.get("_waiting_seed"):
+            await _handle_seed_input(update, context)
+            return
 
     user = update.effective_user
     user_id = user.id if user else (message.sender_chat.id if message.sender_chat else 0)
@@ -156,6 +162,24 @@ async def handle_text(update, context):
             pass
 
 
+async def _handle_comfy_seed_input(update, context):
+    user_id = update.effective_user.id
+    settings = _ensure_settings(context, user_id)
+    try:
+        seed = int(update.message.text.strip())
+        settings["comfy_seed"] = seed
+    except ValueError:
+        await update.message.reply_text("请输入有效的数字。发送 /cancel 取消。")
+        return
+
+    context.user_data["_waiting_input"] = None
+    _save_settings(context, user_id)
+    label = "随机" if seed == -1 else str(seed)
+    await update.message.reply_text(f"ComfyUI 种子已设为: {label}")
+    txt, markup = _comfy_settings_menu_shim(settings)
+    await update.message.reply_text(txt, reply_markup=markup, parse_mode="HTML")
+
+
 async def _handle_seed_input(update, context):
     user_id = update.effective_user.id
     settings = _ensure_settings(context, user_id)
@@ -182,12 +206,20 @@ async def handle_cancel(update, context):
     ):
         return
 
-    if context.user_data.get("_waiting_seed"):
-        context.user_data["_waiting_seed"] = False
+    waiting = context.user_data.get("_waiting_input") if context.user_data else None
+    waiting_seed = context.user_data.get("_waiting_seed") if context.user_data else None
+
+    if waiting or waiting_seed:
+        if context.user_data:
+            context.user_data["_waiting_input"] = None
+            context.user_data["_waiting_seed"] = False
         user_id = update.effective_user.id
         settings = _ensure_settings(context, user_id)
         await update.message.reply_text("已取消。")
-        txt, markup = _settings_menu(settings)
+        if settings.get("backend") == "comfyui":
+            txt, markup = _comfy_settings_menu_shim(settings)
+        else:
+            txt, markup = _settings_menu(settings)
         await update.message.reply_text(txt, reply_markup=markup, parse_mode="HTML")
     else:
         await update.message.reply_text("当前没有需要取消的操作。")
@@ -247,7 +279,15 @@ async def handle_mode_callback(update, context):
     _save_settings(context, user.id)
 
     label = "SD WebUI" if backend == "sd" else "ComfyUI"
-    await query.edit_message_text(f"已切换为 {label} 模式。现在直接发送提示词即可生成图片。")
+    if backend == "comfyui":
+        await query.edit_message_text(
+            f"已切换为 {label} 模式。\n直接发送提示词即可生成，或进入设置调整参数：",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⚙️ ComfyUI 设置", callback_data="comfy_settings"),
+            ]]),
+        )
+    else:
+        await query.edit_message_text(f"已切换为 {label} 模式。现在直接发送提示词即可生成图片。")
 
 
 def get_handlers() -> list:

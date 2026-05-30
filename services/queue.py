@@ -2,13 +2,15 @@ import asyncio
 import html
 import io
 import logging
+import random
 import time
 import uuid
 from dataclasses import dataclass
 
 from config import HIRES_FIX_PARAMS, LOG_FULL_PROMPT, DEFAULT_PROMPT_PREFIX
 from handlers.settings import _generation_menu
-from services import sd_api, credits
+from services import sd_api, comfy_api, credits
+from services.network import is_network_error, retry_on_network_error
 from services.translator import translate
 
 logger = logging.getLogger(__name__)
@@ -51,8 +53,11 @@ class ThrottledProgressUpdater:
         if self._msg_id is None:
             return
         try:
-            await self._app.bot.edit_message_text(
-                text, chat_id=self._chat_id, message_id=self._msg_id
+            await retry_on_network_error(
+                lambda: self._app.bot.edit_message_text(
+                    text, chat_id=self._chat_id, message_id=self._msg_id
+                ),
+                max_retries=2,
             )
         except Exception as e:
             if "Message is not modified" not in str(e):
@@ -114,9 +119,13 @@ class GenerationQueue:
                 except Exception as e:
                     error_text = str(e)
                     if "ConnectError" in error_text or "connect" in error_text.lower():
-                        hint = "SD 服务不可用，请检查后端是否运行。"
+                        backend_label = "ComfyUI" if task.settings.get("backend") == "comfyui" else "SD"
+                        hint = f"{backend_label} 服务不可用，请检查后端是否运行。"
                     elif "timeout" in error_text.lower() or "Timeout" in error_text:
-                        hint = "生成超时，请尝试降低 Steps 或关闭高清修复。"
+                        if task.settings.get("backend") == "comfyui":
+                            hint = "ComfyUI 生成超时，请稍后重试。"
+                        else:
+                            hint = "生成超时，请尝试降低 Steps 或关闭高清修复。"
                     else:
                         hint = f"生成失败: {error_text[:200]}"
                     logger.error("Worker 处理任务异常: %s", e, exc_info=True)
@@ -145,8 +154,8 @@ class GenerationQueue:
             else:
                 translated = task.prompt
 
-            # 2. 切换模型（在 worker 内串行执行）
-            if settings["model"]:
+            # 2. 切换模型（仅在 SD 模式下）
+            if settings.get("backend", "sd") == "sd" and settings["model"]:
                 await updater.set_stage("正在切换模型...")
                 try:
                     await sd_api.set_model(settings["model"])
@@ -154,21 +163,29 @@ class GenerationQueue:
                     pass
 
             # 3. 构建 payload 并生成（带进度轮询）
-            await updater.set_stage("正在生成：0%")
-            payload = _build_payload(settings, translated)
+            if settings.get("backend", "sd") == "sd":
+                await updater.set_stage("正在生成：0%")
+                payload = _build_payload(settings, translated)
 
-            last_progress_task = None
+                last_progress_task = None
 
-            def on_progress(ratio: float, _eta):
-                nonlocal last_progress_task
+                def on_progress(ratio: float, _eta):
+                    nonlocal last_progress_task
+                    if last_progress_task and not last_progress_task.done():
+                        last_progress_task.cancel()
+                    last_progress_task = asyncio.create_task(updater.update_progress(ratio))
+
+                image_data, actual_seed = await sd_api.txt2img(payload, progress_callback=on_progress)
+
                 if last_progress_task and not last_progress_task.done():
                     last_progress_task.cancel()
-                last_progress_task = asyncio.create_task(updater.update_progress(ratio))
-
-            image_data, actual_seed = await sd_api.txt2img(payload, progress_callback=on_progress)
-
-            if last_progress_task and not last_progress_task.done():
-                last_progress_task.cancel()
+            else:
+                # ComfyUI 路径
+                await updater.set_stage("正在生成（ComfyUI）...")
+                seed = int(settings.get("seed", -1))
+                if seed == -1:
+                    seed = random.randint(0, 2**63 - 1)
+                image_data, actual_seed = await comfy_api.generate(translated, seed)
 
         except Exception:
             if task.credit_charged:
@@ -184,34 +201,44 @@ class GenerationQueue:
             "seed": actual_seed,
         }
 
-        # 4. 发送图片
+        # 4. 发送图片（带重试，网络失败时退款并通知用户）
         await updater.set_stage("正在发送图片...")
         elapsed = time.monotonic() - start_time
 
-        info = (
-            f"<b>Prompt:</b> {html.escape(f'{DEFAULT_PROMPT_PREFIX} {translated}')}\n"
-            f"<b>Size:</b> {settings['width']}x{settings['height']}\n"
-            f"<b>Steps:</b> {settings['steps']} | <b>CFG:</b> {settings['cfg_scale']}\n"
-            f"<b>Sampler:</b> {html.escape(settings['sampler'])}\n"
-            f"<b>Hires Fix:</b> {'开' if settings['hires_fix'] else '关'}\n"
-            f"<b>Seed:</b> {actual_seed}\n"
-            f"<b>模型:</b> {html.escape(settings['model'] or '默认')}\n"
-            f"<b>耗时:</b> {elapsed:.1f}s"
-        )
+        if settings.get("backend", "sd") == "sd":
+            info = _build_sd_info(settings, translated, actual_seed, elapsed)
+        else:
+            info = _build_comfy_info(task, translated, actual_seed, elapsed)
 
         # 非管理员显示剩余额度
         if task.credit_charged:
             remaining = await credits.get_remaining(task.user_id)
             info += f"\n<b>剩余额度:</b> {remaining}"
 
-        await self._app.bot.send_photo(
-            chat_id=task.chat_id,
-            photo=io.BytesIO(image_data),
-            caption=info,
-            parse_mode="HTML",
-            reply_to_message_id=task.reply_to_message_id or task.original_message_id,
-            reply_markup=_generation_menu(context_id),
-        )
+        try:
+            await retry_on_network_error(
+                lambda: self._app.bot.send_photo(
+                    chat_id=task.chat_id,
+                    photo=io.BytesIO(image_data),
+                    caption=info,
+                    parse_mode="HTML",
+                    reply_to_message_id=task.reply_to_message_id or task.original_message_id,
+                    reply_markup=_generation_menu(context_id),
+                ),
+                on_retry=lambda attempt, max_retries: updater.set_stage(
+                    f"图片发送失败，正在重试 ({attempt}/{max_retries})..."
+                ),
+            )
+        except Exception as e:
+            if is_network_error(e):
+                logger.error("图片发送失败（网络错误，已重试3次）: %s", e)
+                if task.credit_charged:
+                    await credits.refund_one(task.user_id)
+                await self._update_status(
+                    task, "网络不稳定，图片发送失败，已退还额度。请稍后重试。"
+                )
+                return
+            raise
 
         # 5. 删除状态消息
         if task.status_message_id is not None:
@@ -229,8 +256,11 @@ class GenerationQueue:
         if task.status_message_id is None:
             return
         try:
-            await self._app.bot.edit_message_text(
-                text, chat_id=task.chat_id, message_id=task.status_message_id
+            await retry_on_network_error(
+                lambda: self._app.bot.edit_message_text(
+                    text, chat_id=task.chat_id, message_id=task.status_message_id
+                ),
+                max_retries=2,
             )
         except Exception as e:
             if "Message is not modified" not in str(e):
@@ -269,5 +299,37 @@ def _build_payload(settings: dict, prompt: str) -> dict:
         payload["hr_scale"] = HIRES_FIX_PARAMS["upscale"]
         payload["denoising_strength"] = HIRES_FIX_PARAMS["denoising_strength"]
         payload["hr_second_pass_steps"] = HIRES_FIX_PARAMS["steps"]
+        payload["hr_additional_modules"] = []  # 修复 Forge bug: None 导致 TypeError
 
     return payload
+
+
+def _build_sd_info(settings: dict, translated: str, seed: int, elapsed: float) -> str:
+    return (
+        f"<b>Prompt:</b> {html.escape(f'{DEFAULT_PROMPT_PREFIX} {translated}')}\n"
+        f"<b>Size:</b> {settings['width']}x{settings['height']}\n"
+        f"<b>Steps:</b> {settings['steps']} | <b>CFG:</b> {settings['cfg_scale']}\n"
+        f"<b>Sampler:</b> {html.escape(settings['sampler'])}\n"
+        f"<b>Hires Fix:</b> {'开' if settings['hires_fix'] else '关'}\n"
+        f"<b>Seed:</b> {seed}\n"
+        f"<b>模型:</b> {html.escape(settings['model'] or '默认')}\n"
+        f"<b>耗时:</b> {elapsed:.1f}s"
+    )
+
+
+def _build_comfy_info(task, translated: str, seed: int, elapsed: float) -> str:
+    actual = html.escape(translated)
+    if translated == task.prompt:
+        return (
+            f"<b>Prompt:</b> {actual}\n"
+            f"<b>Seed:</b> {seed}\n"
+            f"<b>后端:</b> ComfyUI\n"
+            f"<b>耗时:</b> {elapsed:.1f}s"
+        )
+    return (
+        f"<b>原始 Prompt:</b> {html.escape(task.prompt)}\n"
+        f"<b>实际 Prompt:</b> {actual}\n"
+        f"<b>Seed:</b> {seed}\n"
+        f"<b>后端:</b> ComfyUI\n"
+        f"<b>耗时:</b> {elapsed:.1f}s"
+    )

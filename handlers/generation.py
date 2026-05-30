@@ -2,12 +2,13 @@ import copy
 import logging
 import re
 
-from telegram import MessageEntity
-from telegram.ext import MessageHandler, CommandHandler, filters
+from telegram import MessageEntity, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import MessageHandler, CommandHandler, CallbackQueryHandler, filters
 
 from config import ADMIN_USER_ID, DEFAULT_USER_SETTINGS
+from services.network import retry_on_network_error
 from services.queue import GenerationTask
-from services import credits
+from services import credits, comfy_api
 from handlers.settings import _ensure_settings, _save_settings, _settings_menu
 from handlers import is_authorized, _user_auth_filter
 
@@ -95,7 +96,10 @@ async def handle_text(update, context):
         credit_charged = True
 
     try:
-        status_msg = await message.reply_text("准备中...")
+        status_msg = await retry_on_network_error(
+            lambda: message.reply_text("准备中..."),
+            max_retries=2,
+        )
         status_id = status_msg.message_id
     except Exception:
         logger.warning("创建状态消息失败，任务将继续执行")
@@ -127,20 +131,26 @@ async def handle_text(update, context):
     if ahead == 0:
         try:
             if status_id is not None:
-                await context.bot.edit_message_text(
-                    "正在准备生成...",
-                    chat_id=chat.id,
-                    message_id=status_id,
+                await retry_on_network_error(
+                    lambda: context.bot.edit_message_text(
+                        "正在准备生成...",
+                        chat_id=chat.id,
+                        message_id=status_id,
+                    ),
+                    max_retries=2,
                 )
         except Exception:
             pass
     else:
         try:
             if status_id is not None:
-                await context.bot.edit_message_text(
-                    f"已加入队列，前方还有 {ahead} 个任务",
-                    chat_id=chat.id,
-                    message_id=status_id,
+                await retry_on_network_error(
+                    lambda: context.bot.edit_message_text(
+                        f"已加入队列，前方还有 {ahead} 个任务",
+                        chat_id=chat.id,
+                        message_id=status_id,
+                    ),
+                    max_retries=2,
                 )
         except Exception:
             pass
@@ -183,9 +193,68 @@ async def handle_cancel(update, context):
         await update.message.reply_text("当前没有需要取消的操作。")
 
 
+async def handle_mode(update, context):
+    """发送后端选择菜单。"""
+    message = update.effective_message
+    user = update.effective_user
+    chat = update.effective_chat
+    if message is None or user is None or chat is None:
+        return
+    user_id = user.id if user else (message.sender_chat.id if message.sender_chat else 0)
+    if not is_authorized(user_id, chat.id, chat.type):
+        return
+
+    settings = _ensure_settings(context, user_id)
+    current = settings.get("backend", "sd")
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🖼️ SD WebUI", callback_data="mode:sd"),
+            InlineKeyboardButton("🎨 ComfyUI", callback_data="mode:comfyui"),
+        ]
+    ])
+    await message.reply_text(
+        f"当前后端: {'SD WebUI' if current == 'sd' else 'ComfyUI'}\n请选择后端：",
+        reply_markup=keyboard,
+    )
+
+
+async def handle_mode_callback(update, context):
+    """处理后端切换。"""
+    query = update.callback_query
+    await query.answer()
+
+    user = query.from_user
+    chat = query.message.chat if query.message else None
+    if user is None or chat is None:
+        return
+    if not is_authorized(user.id, chat.id, chat.type):
+        await query.edit_message_text("⛔ 无使用权限")
+        return
+
+    backend = query.data.split(":", 1)[1]  # "sd" or "comfyui"
+
+    if backend == "comfyui":
+        try:
+            comfy_api.validate_workflow()
+        except Exception as e:
+            await query.edit_message_text(
+                f"ComfyUI 工作流不可用：{e}\n请联系管理员。"
+            )
+            return
+
+    settings = _ensure_settings(context, user.id)
+    settings["backend"] = backend
+    _save_settings(context, user.id)
+
+    label = "SD WebUI" if backend == "sd" else "ComfyUI"
+    await query.edit_message_text(f"已切换为 {label} 模式。现在直接发送提示词即可生成图片。")
+
+
 def get_handlers() -> list:
     return [
         CommandHandler("cancel", handle_cancel, filters=_user_auth_filter()),
+        CommandHandler("mode", handle_mode, filters=_user_auth_filter()),
+        CallbackQueryHandler(handle_mode_callback, pattern=r"^mode:"),
         MessageHandler(
             filters.TEXT & ~filters.COMMAND & _user_auth_filter(),
             handle_text,

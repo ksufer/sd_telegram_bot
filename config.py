@@ -17,6 +17,18 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 SD_API_BASE = os.getenv("SD_API_BASE", "http://10.126.126.1:7860")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 
+# ---- ComfyUI API ----
+COMFY_API_BASE = os.getenv("COMFY_API_BASE", "http://10.126.126.4:8188")
+COMFY_WORKFLOW_PATH = os.getenv("COMFY_WORKFLOW_PATH", "data/zit-api.json")
+COMFY_POLL_INTERVAL = 2       # 轮询间隔（秒）
+COMFY_TIMEOUT = 300           # 生成超时（秒），含模型加载时间
+
+# Workflow 节点 ID 和字段路径（基于 data/zit-api.json）
+COMFY_PROMPT_NODE_ID = "83:27"     # CLIPTextEncode
+COMFY_PROMPT_INPUT_KEY = "text"
+COMFY_SEED_NODE_ID = "83:3"        # KSampler
+COMFY_SEED_INPUT_KEY = "seed"
+
 # ---- 默认生成参数 ----
 DEFAULT_PROMPT_PREFIX = "masterpiece, best quality, amazing quality,"
 DEFAULT_NEGATIVE_PROMPT = "worst quality,normal quality,anatomical nonsense,bad anatomy,interlocked fingers,extra fingers,watermark,simple background,transparent,low quality,logo,text,signature,lowres,(bad),bad hands,limb asymmetry,bad feet,text,error,fewer,extra,missing,worst quality,jpeg artifacts,low quality,watermark,unfinished,displeasing,oldest,early,chromatic aberration,signature,simple_background,artistic error,username,scan,[abstract],english text,"
@@ -70,6 +82,7 @@ DEFAULT_CREDIT_QUOTA = 100
 
 # ---- 用户设置默认值 ----
 DEFAULT_USER_SETTINGS = {
+    "backend": "sd",
     "width": 896,
     "height": 1152,
     "model": None,

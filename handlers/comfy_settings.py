@@ -53,6 +53,8 @@ def _comfy_settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
         keyboard.insert(1, [InlineKeyboardButton("切换尺寸", callback_data="comfy_size")])
 
     keyboard.insert(-1, [InlineKeyboardButton("自定义 Prompt", callback_data="comfy_prompt")])
+    if comfy_prompt:
+        keyboard.insert(-1, [InlineKeyboardButton("🗑 清除 Prompt", callback_data="clear_comfy_prompt")])
     keyboard.append([InlineKeyboardButton("关闭菜单", callback_data="close_menu")])
     return text, InlineKeyboardMarkup(keyboard)
 
@@ -322,6 +324,19 @@ async def random_comfy_seed(update, context):
     await _safe_answer(query, "已恢复随机种子")
 
 
+async def clear_comfy_prompt(update, context):
+    """清除自定义 Prompt，恢复使用实时输入。"""
+    query = update.callback_query
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    settings["comfy_prompt"] = ""
+    _save_settings(context, user_id)
+
+    await _safe_answer(query, "已清除 Prompt")
+    text, markup = _comfy_settings_menu(settings)
+    await _reply_menu(query, text, markup)
+
+
 # ═══ Handler 注册 ═══
 
 def get_handlers() -> list:
@@ -338,4 +353,5 @@ def get_handlers() -> list:
         CallbackQueryHandler(auth_callback(toggle_comfy_translate), pattern=r"^comfy_translate$"),
         CallbackQueryHandler(auth_callback(reuse_comfy_seed), pattern=r"^comfy_reuse_seed_"),
         CallbackQueryHandler(auth_callback(random_comfy_seed), pattern=r"^comfy_random_seed$"),
+        CallbackQueryHandler(auth_callback(clear_comfy_prompt), pattern=r"^clear_comfy_prompt$"),
     ]

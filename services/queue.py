@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 
-from config import HIRES_FIX_PARAMS, LOG_FULL_PROMPT, DEFAULT_PROMPT_PREFIX
+from config import HIRES_FIX_PARAMS, COMFY_WORKFLOWS, LOG_FULL_PROMPT, DEFAULT_PROMPT_PREFIX
 from handlers.settings import _generation_menu
 from services import sd_api, comfy_api, credits
 from services.network import is_network_error, retry_on_network_error
@@ -210,11 +210,15 @@ class GenerationQueue:
         context_id = uuid.uuid4().hex[:8]
         if "_gen_context" not in self._app.bot_data:
             self._app.bot_data["_gen_context"] = {}
-        self._app.bot_data["_gen_context"][context_id] = {
+        _gen = self._app.bot_data["_gen_context"]
+        _gen[context_id] = {
             "prompt": task.prompt,
             "translated": translated,
             "seed": actual_seed,
         }
+        # 只保留最近 50 条，按 Python 3.7+ dict 插入顺序淘汰最旧
+        while len(_gen) > 50:
+            _gen.pop(next(iter(_gen)))
 
         # 4. 发送图片（带重试，网络失败时退款并通知用户）
         await updater.set_stage("正在发送图片...")
@@ -335,20 +339,25 @@ def _build_sd_info(settings: dict, translated: str, seed: int, elapsed: float) -
 
 
 def _build_comfy_info(task, settings: dict, translated: str, seed: int, elapsed: float) -> str:
-    actual = html.escape(translated)
     model = html.escape(settings.get("comfy_model", "?"))
-    size = f"{settings.get('comfy_width', '?')}×{settings.get('comfy_height', '?')}"
+    wf_config = COMFY_WORKFLOWS.get(settings.get("comfy_workflow", ""), {})
+    if wf_config.get("is_img2img") and not wf_config.get("width_node"):
+        size = "跟随输入图片"
+    else:
+        size = f"{settings.get('comfy_width', '?')}×{settings.get('comfy_height', '?')}"
     info_parts = [
         f"<b>模型:</b> {model}",
         f"<b>尺寸:</b> {size}",
         f"<b>Seed:</b> {seed}",
         f"<b>耗时:</b> {elapsed:.1f}s",
     ]
-    if translated == task.prompt:
-        info_parts.insert(0, f"<b>Prompt:</b> {actual}")
-    else:
-        info_parts.insert(0, f"<b>实际 Prompt:</b> {actual}")
-        info_parts.insert(0, f"<b>原始 Prompt:</b> {html.escape(task.prompt)}")
+    if translated and translated.strip():
+        actual = html.escape(translated)
+        if translated == task.prompt:
+            info_parts.insert(0, f"<b>Prompt:</b> {actual}")
+        else:
+            info_parts.insert(0, f"<b>实际 Prompt:</b> {actual}")
+            info_parts.insert(0, f"<b>原始 Prompt:</b> {html.escape(task.prompt)}")
     return "\n".join(info_parts)
 
 

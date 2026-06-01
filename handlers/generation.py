@@ -6,7 +6,7 @@ import re
 from telegram import MessageEntity, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import MessageHandler, CommandHandler, CallbackQueryHandler, filters
 
-from config import ADMIN_USER_ID, DEFAULT_USER_SETTINGS, COMFY_WORKFLOWS
+from config import ADMIN_USER_ID, DEFAULT_USER_SETTINGS, COMFY_WORKFLOWS, COMFY_DEFAULT_WORKFLOW
 from services.network import retry_on_network_error
 from services.queue import GenerationTask
 from services import credits, comfy_api
@@ -86,6 +86,15 @@ async def handle_text(update, context):
 
     logger.info("DEBUG settings: user_id=%s translate=%s model=%s",
                 user_id, settings.get("translate"), settings.get("model"))
+
+    # 图生图工作流拦截纯文字消息
+    if settings.get("backend") == "comfyui":
+        wf_config = COMFY_WORKFLOWS.get(
+            settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW), {}
+        )
+        if wf_config.get("is_img2img"):
+            await message.reply_text("当前工作流是图生图模式，请直接发送图片。")
+            return
 
     # 额度检查 + 扣减（管理员跳过）
     is_admin = ADMIN_USER_ID is not None and user_id == ADMIN_USER_ID
@@ -323,6 +332,19 @@ async def handle_photo(update, context):
     if not is_authorized(user_id, chat.id, chat.type):
         return
 
+    # 群聊中需要 @bot 才触发（与 handle_text 行为一致）
+    if chat.type in ("group", "supergroup"):
+        bot_username = context.bot.username
+        if not bot_username:
+            return
+        entities = message.parse_caption_entities(types=[MessageEntity.MENTION])
+        mentioned = any(
+            text.lower() == f"@{bot_username.lower()}"
+            for text in entities.values()
+        )
+        if not mentioned:
+            return
+
     # 确认是 ComfyUI 模式且当前 workflow 是图生图
     if context.user_data is not None:
         settings = _ensure_settings(context, user_id)
@@ -331,7 +353,7 @@ async def handle_photo(update, context):
 
     if settings.get("backend", "sd") != "comfyui":
         return  # SD 模式不处理图片
-    wf_key = settings.get("comfy_workflow", "z-image-turbo")
+    wf_key = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
     wf_config = COMFY_WORKFLOWS.get(wf_key, {})
     if not wf_config.get("is_img2img"):
         return  # 文生图 workflow 不处理图片

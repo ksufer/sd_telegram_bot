@@ -46,7 +46,7 @@ def _comfy_settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
     ]
 
     # 文生图 workflow 显示尺寸选项
-    if not wf_config.get("is_img2img"):
+    if not wf_config.get("is_img2img", False):
         current_w = settings.get("comfy_width", 768)
         current_h = settings.get("comfy_height", 1280)
         text += f"\n尺寸: {current_w}×{current_h}"

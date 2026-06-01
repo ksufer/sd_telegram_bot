@@ -56,6 +56,21 @@ COMFY_WORKFLOWS = {
         "load_image_key": "image",
         "default_model": "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
     },
+    "qwen-image-edit": {
+        "label": "Qwen Image Edit（图生图）",
+        "path": os.getenv("COMFY_QWEN_EDIT_WORKFLOW_PATH", "data/Qwen Image Edit Rapid v1.0 (api).json"),
+        "is_img2img": True,
+        "prompt_node": "119",
+        "prompt_key": "prompt",
+        "seed_node": "117",
+        "seed_key": "value",
+        "model_node": "118",
+        "model_key": "ckpt_name",
+        "model_loader_class": "CheckpointLoaderSimple",
+        "load_image_node": "78",
+        "load_image_key": "image",
+        "default_model": "Qwen-Rapid-AIO-NSFW-v11.1.safetensors",
+    },
 }
 
 # 兼容旧代码（从默认 workflow 取值）

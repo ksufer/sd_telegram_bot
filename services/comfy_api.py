@@ -94,6 +94,13 @@ def validate_workflow() -> None:
     """校验所有配置的 workflow 文件存在且关键节点正确。"""
     for wf_key, wf in COMFY_WORKFLOWS.items():
         workflow = _load_workflow(wf_key)
+
+        # 强制要求 is_img2img 字段
+        if "is_img2img" not in wf:
+            raise ComfyWorkflowError(
+                f"Workflow '{wf_key}': 缺少 'is_img2img' 字段（必须显式指定 True/False）"
+            )
+
         _set_node_input(workflow, wf["prompt_node"], wf["prompt_key"], "test")
         _set_node_input(workflow, wf["seed_node"], wf["seed_key"], 1)
         _set_node_input(workflow, wf["model_node"], wf["model_key"],
@@ -103,6 +110,24 @@ def validate_workflow() -> None:
             _set_node_input(workflow, wf["height_node"], wf["height_key"], 1280)
         if "load_image_node" in wf:
             _set_node_input(workflow, wf["load_image_node"], wf["load_image_key"], "test.png")
+
+        # 校验 model_loader_class 与实际节点 class_type 一致
+        model_node = wf.get("model_node")
+        expected_class = wf.get("model_loader_class")
+        if model_node is not None and expected_class:
+            node = workflow.get(str(model_node))
+            if not node:
+                raise ComfyWorkflowError(
+                    f"Workflow '{wf_key}': model_node '{model_node}' 不存在"
+                )
+            actual_class = node.get("class_type")
+            if actual_class != expected_class:
+                raise ComfyWorkflowError(
+                    f"Workflow '{wf_key}': model_loader_class "
+                    f"'{expected_class}' 与节点 {model_node} "
+                    f"class_type '{actual_class}' 不匹配"
+                )
+
     logger.info("所有 ComfyUI workflow 校验通过")
 
 
@@ -118,7 +143,13 @@ async def get_models(settings: dict) -> list[str]:
         data = resp.json()
     node_info = data.get(loader_class, {})
     required = node_info.get("input", {}).get("required", {})
-    models = required.get(model_key, [[]])[0]
+    if model_key not in required:
+        logger.warning(
+            "Workflow '%s': model_key '%s' 不在 %s 的 required 字段中，模型列表为空",
+            settings.get("comfy_workflow", "?"), model_key, loader_class
+        )
+        return []
+    models = required[model_key][0]
     return models if isinstance(models, list) else []
 
 
@@ -146,7 +177,7 @@ async def _submit_prompt(client: httpx.AsyncClient, workflow: dict) -> str:
     return prompt_id
 
 
-async def _poll_result(client: httpx.AsyncClient, prompt_id: str) -> bytes:
+async def _poll_result(client: httpx.AsyncClient, prompt_id: str, wf_key: str | None = None) -> bytes:
     deadline = time.monotonic() + COMFY_TIMEOUT
     while time.monotonic() < deadline:
         resp = await client.get(f"/history/{prompt_id}")
@@ -178,6 +209,13 @@ async def _poll_result(client: httpx.AsyncClient, prompt_id: str) -> bytes:
 
         await asyncio.sleep(COMFY_POLL_INTERVAL)
 
+    logger.warning(
+        "ComfyUI 生成超时 (%ss), workflow=%s, 输出节点: %s",
+        COMFY_TIMEOUT,
+        wf_key or "?",
+        [nid for nid, node in _workflow_cache.get(wf_key, {}).items()
+         if isinstance(node, dict) and node.get("class_type") in ("SaveImage", "Image Saver Simple")]
+    )
     raise ComfyTimeoutError(f"ComfyUI 生成超时 ({COMFY_TIMEOUT}s)")
 
 
@@ -205,5 +243,5 @@ async def generate(prompt: str, settings: dict, seed: int,
     timeout = httpx.Timeout(connect=10, read=COMFY_TIMEOUT, write=30, pool=10)
     async with httpx.AsyncClient(base_url=COMFY_API_BASE, timeout=timeout) as client:
         prompt_id = await _submit_prompt(client, payload)
-        image_bytes = await _poll_result(client, prompt_id)
+        image_bytes = await _poll_result(client, prompt_id, wf_key)
     return image_bytes, seed

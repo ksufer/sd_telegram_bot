@@ -6,6 +6,7 @@ from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import CallbackQueryHandler
 
 from config import COMFY_SIZE_PRESETS, COMFY_WORKFLOWS, COMFY_DEFAULT_WORKFLOW
+from config import COMFY_VIDEO_ORIENTATIONS, COMFY_VIDEO_FRAMES_PRESETS
 from handlers import auth_callback
 from handlers.settings import _ensure_settings, _save_settings
 from services import comfy_api
@@ -27,10 +28,16 @@ def _comfy_settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
     prompt_preview = comfy_prompt[:30] + "..." if comfy_prompt else "（使用默认）"
     translate_label = "ON" if translate else "OFF"
 
+    is_video = wf_config.get("output_type") == "video"
+    model_selectable = wf_config.get("model_selectable", True)
+
     text = (
         f"<b>🎨 ComfyUI 设置</b>\n"
         f"Workflow: {wf_config['label']}\n"
-        f"模型: <code>{model}</code>\n"
+    )
+    if model_selectable:
+        text += f"模型: <code>{model}</code>\n"
+    text += (
         f"种子: {seed_label}\n"
         f"翻译: {translate_label}\n"
         f"Prompt: {prompt_preview}"
@@ -38,12 +45,13 @@ def _comfy_settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
 
     keyboard = [
         [InlineKeyboardButton("切换 Workflow", callback_data="comfy_workflow")],
-        [InlineKeyboardButton("切换模型", callback_data="comfy_model")],
-        [
-            InlineKeyboardButton("种子输入", callback_data="comfy_seed"),
-            InlineKeyboardButton(f"翻译 · {translate_label}", callback_data="comfy_translate"),
-        ],
     ]
+    if model_selectable:
+        keyboard.append([InlineKeyboardButton("切换模型", callback_data="comfy_model")])
+    keyboard.append([
+        InlineKeyboardButton("种子输入", callback_data="comfy_seed"),
+        InlineKeyboardButton(f"翻译 · {translate_label}", callback_data="comfy_translate"),
+    ])
 
     # 文生图 workflow 显示尺寸选项
     if not wf_config.get("is_img2img", False):
@@ -52,10 +60,23 @@ def _comfy_settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
         text += f"\n尺寸: {current_w}×{current_h}"
         keyboard.insert(1, [InlineKeyboardButton("切换尺寸", callback_data="comfy_size")])
 
+    # 视频 workflow 显示方向和长度
+    if is_video:
+        orient = settings.get("comfy_video_orientation", "portrait")
+        orient_cfg = COMFY_VIDEO_ORIENTATIONS.get(orient, COMFY_VIDEO_ORIENTATIONS["portrait"])
+        frames_key = str(settings.get("comfy_video_frames", 81))
+        frames_cfg = COMFY_VIDEO_FRAMES_PRESETS.get(frames_key, COMFY_VIDEO_FRAMES_PRESETS["81"])
+        text += f"\n视频方向: {orient_cfg['label']}"
+        text += f"\n视频长度: {frames_cfg['label']}"
+        keyboard.insert(1, [
+            InlineKeyboardButton("视频方向", callback_data="comfy_video_orientation"),
+            InlineKeyboardButton("视频长度", callback_data="comfy_video_length"),
+        ])
+
     keyboard.insert(-1, [InlineKeyboardButton("自定义 Prompt", callback_data="comfy_prompt")])
     if comfy_prompt:
         keyboard.insert(-1, [InlineKeyboardButton("🗑 清除 Prompt", callback_data="clear_comfy_prompt")])
-    keyboard.append([InlineKeyboardButton("关闭菜单", callback_data="close_menu")])
+    keyboard.append([InlineKeyboardButton("🔙 返回主菜单", callback_data="main_menu")])
     return text, InlineKeyboardMarkup(keyboard)
 
 
@@ -70,7 +91,7 @@ def _comfy_workflow_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
             f"{prefix}{wf['label']}", callback_data=f"comfy_workflow:{key}"
         )])
 
-    keyboard.append([InlineKeyboardButton("返回", callback_data="comfy_settings")])
+    keyboard.append([InlineKeyboardButton("🔙 返回主菜单", callback_data="main_menu")])
     return text, InlineKeyboardMarkup(keyboard)
 
 
@@ -87,7 +108,7 @@ def _comfy_model_menu(settings: dict, models: list[str]) -> tuple[str, InlineKey
             f"{prefix}{name}", callback_data=f"comfy_model:{i}"
         )])
 
-    keyboard.append([InlineKeyboardButton("返回", callback_data="comfy_settings")])
+    keyboard.append([InlineKeyboardButton("🔙 返回主菜单", callback_data="main_menu")])
     return text, InlineKeyboardMarkup(keyboard)
 
 
@@ -104,7 +125,7 @@ def _comfy_size_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
             f"{prefix}{preset['label']}", callback_data=f"comfy_size:{key}"
         )])
 
-    keyboard.append([InlineKeyboardButton("返回", callback_data="comfy_settings")])
+    keyboard.append([InlineKeyboardButton("🔙 返回主菜单", callback_data="main_menu")])
     return text, InlineKeyboardMarkup(keyboard)
 
 
@@ -152,7 +173,7 @@ async def show_comfy_model_menu(update, context):
         await query.edit_message_text(
             "无法获取 ComfyUI 模型列表，请确认 ComfyUI 服务是否在线。",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("返回", callback_data="comfy_settings"),
+                InlineKeyboardButton("🔙 返回主菜单", callback_data="main_menu"),
             ]]),
         )
         return
@@ -337,6 +358,89 @@ async def clear_comfy_prompt(update, context):
     await _reply_menu(query, text, markup)
 
 
+# ═══ 视频方向/长度菜单 ═══
+
+def _comfy_video_orientation_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
+    current = settings.get("comfy_video_orientation", "portrait")
+    text = "<b>选择视频方向</b>"
+    keyboard = []
+    for key, preset in COMFY_VIDEO_ORIENTATIONS.items():
+        prefix = "✓ " if key == current else ""
+        keyboard.append([InlineKeyboardButton(
+            f"{prefix}{preset['label']}", callback_data=f"comfy_video_orientation:{key}"
+        )])
+    keyboard.append([InlineKeyboardButton("🔙 返回主菜单", callback_data="main_menu")])
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def _comfy_video_length_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
+    current = settings.get("comfy_video_frames", 81)
+    text = f"<b>选择视频长度</b>\n当前: {current}帧"
+    keyboard = []
+    for key, preset in COMFY_VIDEO_FRAMES_PRESETS.items():
+        active = preset["frames"] == current
+        prefix = "✓ " if active else ""
+        keyboard.append([InlineKeyboardButton(
+            f"{prefix}{preset['label']}", callback_data=f"comfy_video_length:{key}"
+        )])
+    keyboard.append([InlineKeyboardButton("🔙 返回主菜单", callback_data="main_menu")])
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+async def show_comfy_video_orientation_menu(update, context):
+    """显示视频方向选择菜单。"""
+    query = update.callback_query
+    await _safe_answer(query)
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    text, markup = _comfy_video_orientation_menu(settings)
+    await _reply_menu(query, text, markup)
+
+
+async def pick_comfy_video_orientation(update, context):
+    """选择视频方向。"""
+    query = update.callback_query
+    orientation = query.data.split(":", 1)[1]
+    if orientation not in COMFY_VIDEO_ORIENTATIONS:
+        await _safe_answer(query, "无效方向", show_alert=True)
+        return
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    settings["comfy_video_orientation"] = orientation
+    _save_settings(context, user_id)
+    label = COMFY_VIDEO_ORIENTATIONS[orientation]["label"]
+    await _safe_answer(query, f"视频方向: {label}")
+    text, markup = _comfy_settings_menu(settings)
+    await _reply_menu(query, text, markup)
+
+
+async def show_comfy_video_length_menu(update, context):
+    """显示视频长度选择菜单。"""
+    query = update.callback_query
+    await _safe_answer(query)
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    text, markup = _comfy_video_length_menu(settings)
+    await _reply_menu(query, text, markup)
+
+
+async def pick_comfy_video_length(update, context):
+    """选择视频长度。"""
+    query = update.callback_query
+    key = query.data.split(":", 1)[1]
+    preset = COMFY_VIDEO_FRAMES_PRESETS.get(key)
+    if preset is None:
+        await _safe_answer(query, "无效时长", show_alert=True)
+        return
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    settings["comfy_video_frames"] = preset["frames"]
+    _save_settings(context, user_id)
+    await _safe_answer(query, f"视频长度: {preset['label']}")
+    text, markup = _comfy_settings_menu(settings)
+    await _reply_menu(query, text, markup)
+
+
 # ═══ Handler 注册 ═══
 
 def get_handlers() -> list:
@@ -354,4 +458,13 @@ def get_handlers() -> list:
         CallbackQueryHandler(auth_callback(reuse_comfy_seed), pattern=r"^comfy_reuse_seed_"),
         CallbackQueryHandler(auth_callback(random_comfy_seed), pattern=r"^comfy_random_seed$"),
         CallbackQueryHandler(auth_callback(clear_comfy_prompt), pattern=r"^clear_comfy_prompt$"),
+        # 视频方向/长度
+        CallbackQueryHandler(auth_callback(show_comfy_video_orientation_menu),
+                             pattern=r"^comfy_video_orientation$"),
+        CallbackQueryHandler(auth_callback(pick_comfy_video_orientation),
+                             pattern=r"^comfy_video_orientation:[a-z_]+$"),
+        CallbackQueryHandler(auth_callback(show_comfy_video_length_menu),
+                             pattern=r"^comfy_video_length$"),
+        CallbackQueryHandler(auth_callback(pick_comfy_video_length),
+                             pattern=r"^comfy_video_length:\d+$"),
     ]

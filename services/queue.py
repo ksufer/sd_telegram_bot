@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 
 from config import HIRES_FIX_PARAMS, COMFY_WORKFLOWS, LOG_FULL_PROMPT, DEFAULT_PROMPT_PREFIX
+from config import COMFY_VIDEO_ORIENTATIONS, COMFY_VIDEO_FRAMES_PRESETS
 from handlers.settings import _generation_menu
 from services import sd_api, comfy_api, credits
 from services.network import is_network_error, retry_on_network_error
@@ -157,8 +158,8 @@ class GenerationQueue:
             else:
                 translate_enabled = settings.get("translate", True)
 
-            if backend == "comfyui" and settings.get("_uploaded_image"):
-                # 图生图模式：无文字 prompt，跳过翻译
+            if backend == "comfyui" and settings.get("_uploaded_image") and not task.prompt:
+                # 图生图模式且无文字 prompt，跳过翻译
                 translated = task.prompt
             elif translate_enabled:
                 await updater.set_stage("正在翻译提示词...")
@@ -194,11 +195,13 @@ class GenerationQueue:
             else:
                 # ComfyUI 路径
                 await updater.set_stage("正在生成（ComfyUI）...")
+                wf_key = settings.get("comfy_workflow", "")
+                wf_config = COMFY_WORKFLOWS.get(wf_key, {})
                 seed = int(settings.get("comfy_seed", -1))
                 if seed == -1:
                     seed = random.randint(0, 2**63 - 1)
                 uploaded_image = settings.get("_uploaded_image")
-                image_data, actual_seed = await comfy_api.generate(
+                comfy_output, actual_seed = await comfy_api.generate(
                     translated, settings, seed, uploaded_image=uploaded_image,
                 )
 
@@ -220,46 +223,95 @@ class GenerationQueue:
         while len(_gen) > 50:
             _gen.pop(next(iter(_gen)))
 
-        # 4. 发送图片（带重试，网络失败时退款并通知用户）
-        await updater.set_stage("正在发送图片...")
+        # 4. 发送结果（带重试，网络失败时退款并通知用户）
+        await updater.set_stage("正在发送...")
         elapsed = time.monotonic() - start_time
 
         if backend == "sd":
             info = _build_sd_info(settings, translated, actual_seed, elapsed)
             reply_markup = _generation_menu(context_id)
+            raw_data = image_data
         else:
             info = _build_comfy_info(task, settings, translated, actual_seed, elapsed)
             reply_markup = _comfy_generation_menu(context_id)
+            raw_data = comfy_output.data
 
         # 非管理员显示剩余额度
         if task.credit_charged:
             remaining = await credits.get_remaining(task.user_id)
             info += f"\n<b>剩余额度:</b> {remaining}"
 
-        try:
-            await retry_on_network_error(
-                lambda: self._app.bot.send_photo(
-                    chat_id=task.chat_id,
-                    photo=io.BytesIO(image_data),
-                    caption=info,
-                    parse_mode="HTML",
-                    reply_to_message_id=task.reply_to_message_id or task.original_message_id,
-                    reply_markup=reply_markup,
-                ),
-                on_retry=lambda attempt, max_retries: updater.set_stage(
-                    f"图片发送失败，正在重试 ({attempt}/{max_retries})..."
-                ),
-            )
-        except Exception as e:
-            if is_network_error(e):
-                logger.error("图片发送失败（网络错误，已重试3次）: %s", e)
-                if task.credit_charged:
-                    await credits.refund_one(task.user_id)
-                await self._update_status(
-                    task, "网络不稳定，图片发送失败，已退还额度。请稍后重试。"
+        is_video = backend == "comfyui" and wf_config.get("output_type") == "video"
+
+        if is_video:
+            # 视频工作流：send_video，失败则 fallback 到 send_document
+            _filename = comfy_output.filename
+            try:
+                await retry_on_network_error(
+                    lambda: self._app.bot.send_video(
+                        chat_id=task.chat_id,
+                        video=io.BytesIO(raw_data),
+                        filename=_filename,
+                        caption=info,
+                        parse_mode="HTML",
+                        reply_to_message_id=task.reply_to_message_id or task.original_message_id,
+                        reply_markup=reply_markup,
+                        supports_streaming=True,
+                    ),
+                    on_retry=lambda attempt, max_retries: updater.set_stage(
+                        f"视频发送失败，正在重试 ({attempt}/{max_retries})..."
+                    ),
                 )
-                return
-            raise
+            except Exception as e:
+                logger.exception("send_video 失败，fallback 到 send_document")
+                _fallback_info = info + "\n（视频无法直接播放，已改为文件发送）"
+                try:
+                    await retry_on_network_error(
+                        lambda: self._app.bot.send_document(
+                            chat_id=task.chat_id,
+                            document=io.BytesIO(raw_data),
+                            filename=_filename,
+                            caption=_fallback_info,
+                            parse_mode="HTML",
+                            reply_to_message_id=task.reply_to_message_id or task.original_message_id,
+                            reply_markup=reply_markup,
+                        ),
+                    )
+                except Exception as e2:
+                    if is_network_error(e2):
+                        logger.error("视频文件发送失败（网络错误）: %s", e2)
+                        if task.credit_charged:
+                            await credits.refund_one(task.user_id)
+                        await self._update_status(
+                            task, "网络不稳定，视频发送失败，已退还额度。请稍后重试。"
+                        )
+                        return
+                    raise
+        else:
+            try:
+                await retry_on_network_error(
+                    lambda: self._app.bot.send_photo(
+                        chat_id=task.chat_id,
+                        photo=io.BytesIO(raw_data),
+                        caption=info,
+                        parse_mode="HTML",
+                        reply_to_message_id=task.reply_to_message_id or task.original_message_id,
+                        reply_markup=reply_markup,
+                    ),
+                    on_retry=lambda attempt, max_retries: updater.set_stage(
+                        f"图片发送失败，正在重试 ({attempt}/{max_retries})..."
+                    ),
+                )
+            except Exception as e:
+                if is_network_error(e):
+                    logger.error("图片发送失败（网络错误，已重试3次）: %s", e)
+                    if task.credit_charged:
+                        await credits.refund_one(task.user_id)
+                    await self._update_status(
+                        task, "网络不稳定，图片发送失败，已退还额度。请稍后重试。"
+                    )
+                    return
+                raise
 
         # 5. 删除状态消息
         if task.status_message_id is not None:
@@ -339,18 +391,35 @@ def _build_sd_info(settings: dict, translated: str, seed: int, elapsed: float) -
 
 
 def _build_comfy_info(task, settings: dict, translated: str, seed: int, elapsed: float) -> str:
-    model = html.escape(settings.get("comfy_model", "?"))
     wf_config = COMFY_WORKFLOWS.get(settings.get("comfy_workflow", ""), {})
-    if wf_config.get("is_img2img") and not wf_config.get("width_node"):
-        size = "跟随输入图片"
+    is_video = wf_config.get("output_type") == "video"
+    model_selectable = wf_config.get("model_selectable", True)
+
+    if is_video:
+        # 视频工作流：显示方向/长度
+        orient = settings.get("comfy_video_orientation", "portrait")
+        orient_cfg = COMFY_VIDEO_ORIENTATIONS.get(orient, COMFY_VIDEO_ORIENTATIONS["portrait"])
+        frames_key = str(settings.get("comfy_video_frames", 81))
+        frames_cfg = COMFY_VIDEO_FRAMES_PRESETS.get(frames_key, COMFY_VIDEO_FRAMES_PRESETS["81"])
+        info_parts = [
+            f"<b>视频方向:</b> {orient_cfg['label']}",
+            f"<b>视频长度:</b> {frames_cfg['label']}",
+            f"<b>Seed:</b> {seed}",
+            f"<b>耗时:</b> {elapsed:.1f}s",
+        ]
     else:
-        size = f"{settings.get('comfy_width', '?')}×{settings.get('comfy_height', '?')}"
-    info_parts = [
-        f"<b>模型:</b> {model}",
-        f"<b>尺寸:</b> {size}",
-        f"<b>Seed:</b> {seed}",
-        f"<b>耗时:</b> {elapsed:.1f}s",
-    ]
+        model = html.escape(settings.get("comfy_model", "?"))
+        if wf_config.get("is_img2img") and not wf_config.get("width_node"):
+            size = "跟随输入图片"
+        else:
+            size = f"{settings.get('comfy_width', '?')}×{settings.get('comfy_height', '?')}"
+        info_parts = [
+            f"<b>模型:</b> {model}",
+            f"<b>尺寸:</b> {size}",
+            f"<b>Seed:</b> {seed}",
+            f"<b>耗时:</b> {elapsed:.1f}s",
+        ]
+
     if translated and translated.strip():
         actual = html.escape(translated)
         if translated == task.prompt:

@@ -20,7 +20,7 @@ DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 # ---- ComfyUI API ----
 COMFY_API_BASE = os.getenv("COMFY_API_BASE", "http://10.126.126.4:8188")
 COMFY_POLL_INTERVAL = 2
-COMFY_TIMEOUT = 300
+COMFY_TIMEOUT = 1500
 COMFY_DEFAULT_WORKFLOW = "z-image-turbo"
 
 COMFY_WORKFLOWS = {
@@ -70,6 +70,31 @@ COMFY_WORKFLOWS = {
         "load_image_node": "78",
         "load_image_key": "image",
         "default_model": "Qwen-Rapid-AIO-NSFW-v11.1.safetensors",
+        "use_caption_as_prompt": True,
+    },
+    "image-to-video": {
+        "label": "Image-to-Video（图生视频）",
+        "path": "data/image_to_video.json",
+        "is_img2img": True,
+        "use_caption_as_prompt": True,
+        "model_selectable": False,
+        "output_type": "video",
+        "prompt_node": "129:93",
+        "prompt_key": "text",
+        "seed_node": "129:86",
+        "seed_key": "noise_seed",
+        "model_node": "129:95",
+        "model_key": "unet_name",
+        "model_loader_class": "UNETLoader",
+        "load_image_node": "97",
+        "load_image_key": "image",
+        "video_width_node": "129:98",
+        "video_width_key": "width",
+        "video_height_node": "129:98",
+        "video_height_key": "height",
+        "video_frames_node": "129:98",
+        "video_frames_key": "length",
+        "default_model": "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
     },
 }
 
@@ -112,6 +137,20 @@ COMFY_SIZE_PRESETS = {
     "1024x1024": {"label": "1024×1024（方形）", "width": 1024, "height": 1024},
     "896x1152":  {"label": "896×1152（3:4）",  "width": 896,  "height": 1152},
     "1152x896":  {"label": "1152×896（4:3）",  "width": 1152, "height": 896},
+}
+
+# ---- ComfyUI 视频方向预设 ----
+COMFY_VIDEO_ORIENTATIONS = {
+    "portrait":  {"label": "竖版 (480×848)", "width": 480, "height": 848},
+    "landscape": {"label": "横版 (848×480)", "width": 848, "height": 480},
+}
+
+# ---- ComfyUI 视频长度预设（帧数）----
+COMFY_VIDEO_FRAMES_PRESETS = {
+    "81":  {"label": "~3秒 (81帧)",   "frames": 81},
+    "135": {"label": "~5秒 (135帧)",  "frames": 135},
+    "189": {"label": "~7秒 (189帧)",  "frames": 189},
+    "270": {"label": "~10秒 (270帧)", "frames": 270},
 }
 
 # ---- 高清修复预置参数 ----
@@ -163,4 +202,6 @@ DEFAULT_USER_SETTINGS = {
     "comfy_height": 1280,
     "comfy_translate": False,
     "comfy_prompt": "",  # 空 = 使用 workflow 默认 prompt
+    "comfy_video_orientation": "portrait",
+    "comfy_video_frames": 81,
 }

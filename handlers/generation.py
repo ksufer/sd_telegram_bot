@@ -57,14 +57,7 @@ async def handle_text(update, context):
     if not is_authorized(user.id if user else 0, chat.id, chat.type):
         return
 
-    # 群聊 @bot 检测 + 提示词提取
-    prompt, is_for_me = _extract_prompt(message, context.bot.username)
-    if prompt is None:
-        if is_for_me:
-            await message.reply_text("请在 @Bot 后输入提示词。")
-        return
-
-    # 等待输入处理（种子等）— 必须在正常生成逻辑之前
+    # 等待输入处理（种子等）— 必须在 _extract_prompt 之前，避免被拦截
     if context.user_data is not None:
         waiting = context.user_data.get("_waiting_input")
         if waiting == "comfy_prompt":
@@ -87,13 +80,157 @@ async def handle_text(update, context):
     logger.info("DEBUG settings: user_id=%s translate=%s model=%s",
                 user_id, settings.get("translate"), settings.get("model"))
 
-    # 图生图工作流拦截纯文字消息
+    # 多轮编辑检测：回复 bot 图片结果 + 文字指令（在 _extract_prompt 之前，无需 @bot）
+    wf_key = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
+    wf_config = COMFY_WORKFLOWS.get(wf_key, {})
+    try:
+        if (
+            settings.get("backend") == "comfyui"
+            and wf_key == "qwen-image-edit"
+            and wf_config.get("is_img2img")
+            and message.reply_to_message
+            and message.reply_to_message.from_user
+            and message.reply_to_message.from_user.id == context.bot.id
+            and message.reply_to_message.photo
+        ):
+            prompt_text = (message.text or "").strip()
+            if not prompt_text:
+                await message.reply_text("请在回复中附上修改指令，例如「把头发变红」。")
+                return
+
+            # 额度检查
+            is_admin = ADMIN_USER_ID is not None and user_id == ADMIN_USER_ID
+            credit_charged = False
+            if not is_admin:
+                remaining = await credits.get_remaining(user_id)
+                if remaining <= 0:
+                    stats = await credits.get_stats(user_id)
+                    await message.reply_text(
+                        f"额度已用完（已用 {stats['used']}/{stats['total_quota']}），请联系管理员增加额度。"
+                    )
+                    return
+                if not await credits.use_one(user_id):
+                    await message.reply_text("额度扣减失败，请稍后重试。")
+                    return
+                credit_charged = True
+
+            # 状态消息
+            try:
+                status_msg = await retry_on_network_error(
+                    lambda: message.reply_text("正在上传图片..."),
+                    max_retries=2,
+                )
+                status_id = status_msg.message_id
+            except Exception:
+                logger.warning("创建状态消息失败")
+                status_id = None
+
+            # 下载被回复消息中的图片
+            try:
+                replied_photo = message.reply_to_message.photo[-1]
+                photo_file = await replied_photo.get_file()
+                image_bytes = io.BytesIO()
+                await photo_file.download_to_memory(image_bytes)
+                image_bytes.seek(0)
+            except Exception as e:
+                logger.error("下载回复图片失败: %s", e)
+                if credit_charged:
+                    await credits.refund_one(user_id)
+                await message.reply_text("下载图片失败，请稍后重试。")
+                return
+
+            # 上传到 ComfyUI
+            try:
+                if status_id is not None:
+                    await retry_on_network_error(
+                        lambda: context.bot.edit_message_text(
+                            "正在上传图片到 ComfyUI...",
+                            chat_id=chat.id, message_id=status_id,
+                        ),
+                        max_retries=2,
+                    )
+                uploaded_name = await comfy_api.upload_image(image_bytes.read())
+            except Exception as e:
+                logger.error("上传图片到 ComfyUI 失败: %s", e)
+                if credit_charged:
+                    await credits.refund_one(user_id)
+                await message.reply_text(f"上传图片失败: {e}")
+                return
+
+            # 入队
+            task_settings = copy.deepcopy(settings)
+            task_settings["_uploaded_image"] = uploaded_name
+
+            reply_to = message.message_id if chat.type in ("group", "supergroup") else None
+            task = GenerationTask(
+                user_id=user_id,
+                chat_id=chat.id,
+                prompt=prompt_text,
+                settings=task_settings,
+                status_message_id=status_id,
+                original_message_id=message.message_id,
+                reply_to_message_id=reply_to,
+                credit_charged=credit_charged,
+            )
+
+            queue = context.bot_data["queue"]
+            try:
+                ahead = await queue.enqueue(task)
+            except Exception:
+                logger.error("用户 %s 入队失败（多轮编辑）", user_id, exc_info=True)
+                if credit_charged:
+                    await credits.refund_one(user_id)
+                await message.reply_text("任务提交失败，请稍后重试。")
+                return
+
+            # 队列状态提示
+            if ahead == 0 and status_id is not None:
+                try:
+                    await retry_on_network_error(
+                        lambda: context.bot.edit_message_text(
+                            "正在准备生成...", chat_id=chat.id, message_id=status_id,
+                        ),
+                        max_retries=2,
+                    )
+                except Exception:
+                    pass
+            elif ahead > 0 and status_id is not None:
+                try:
+                    await retry_on_network_error(
+                        lambda: context.bot.edit_message_text(
+                            f"已加入队列，前方还有 {ahead} 个任务",
+                            chat_id=chat.id, message_id=status_id,
+                        ),
+                        max_retries=2,
+                    )
+                except Exception:
+                    pass
+
+            return
+    except Exception:
+        logger.error("多轮编辑检测异常", exc_info=True)
+
+    # 群聊 @bot 检测 + 提示词提取（多轮编辑未触发时才走到这里）
+    prompt, is_for_me = _extract_prompt(message, context.bot.username)
+    if prompt is None:
+        if is_for_me:
+            await message.reply_text("请在 @Bot 后输入提示词。")
+        return
+
+    # 图生图工作流拦截纯文字消息（多轮编辑未触发时）
     if settings.get("backend") == "comfyui":
-        wf_config = COMFY_WORKFLOWS.get(
-            settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW), {}
-        )
         if wf_config.get("is_img2img"):
-            await message.reply_text("当前工作流是图生图模式，请直接发送图片。")
+            if wf_key == "qwen-image-edit":
+                await message.reply_text(
+                    "当前工作流是图生图模式，请直接发送图片，"
+                    "或回复之前的生成结果并输入文字来继续修改。"
+                )
+            elif wf_config.get("output_type") == "video":
+                await message.reply_text(
+                    "当前工作流是图生视频模式，请发送图片，并可在图片说明中填写提示词。"
+                )
+            else:
+                await message.reply_text("当前工作流是图生图模式，请直接发送图片。")
             return
 
     # 额度检查 + 扣减（管理员跳过）
@@ -418,10 +555,27 @@ async def handle_photo(update, context):
     task_settings = copy.deepcopy(settings)
     task_settings["_uploaded_image"] = uploaded_name
 
+    # 提取 caption 作为 prompt（仅 use_caption_as_prompt=True 的工作流）
+    if wf_config.get("use_caption_as_prompt"):
+        caption = (message.caption or "").strip()
+        # 群聊用 entity 方式去除 @bot
+        if caption and chat.type in ("group", "supergroup"):
+            bot_username = context.bot.username
+            if bot_username:
+                mention = f"@{bot_username}".lower()
+                entities = message.parse_caption_entities(types=[MessageEntity.MENTION])
+                for text in entities.values():
+                    if text.lower() == mention:
+                        caption = caption.replace(text, "", 1).strip()
+                        break
+        prompt_text = caption  # 允许空 caption
+    else:
+        prompt_text = ""  # 其他 img2img 保持原行为
+
     task = GenerationTask(
         user_id=user_id,
         chat_id=chat.id,
-        prompt="",  # 图生图无文字 prompt
+        prompt=prompt_text,
         settings=task_settings,
         status_message_id=status_id,
         original_message_id=message.message_id,

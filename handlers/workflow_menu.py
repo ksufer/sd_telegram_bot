@@ -9,7 +9,6 @@ from telegram.ext import CallbackQueryHandler, CommandHandler
 from config import (
     WORKFLOW_REGISTRY,
     COMFY_WORKFLOWS,
-    COMFY_DEFAULT_WORKFLOW,
     COMFY_VIDEO_ORIENTATIONS,
     COMFY_VIDEO_FRAMES_PRESETS,
 )

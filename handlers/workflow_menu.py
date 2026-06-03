@@ -16,7 +16,6 @@ from handlers import auth_callback, _user_auth_filter
 from handlers.settings import (
     _ensure_settings,
     _save_settings,
-    close_menu,
 )
 from services import credits as credits_service
 

@@ -13,6 +13,7 @@ from handlers import settings as settings_handler
 from handlers import generation as generation_handler
 from handlers import credits as credits_handler
 from handlers import comfy_settings as comfy_settings_handler
+from handlers import workflow_menu as workflow_menu_handler
 
 
 def main():
@@ -57,6 +58,7 @@ def main():
     queue = GenerationQueue(app)
     app.bot_data["queue"] = queue
 
+    app.add_handlers(workflow_menu_handler.get_handlers())
     app.add_handlers(settings_handler.get_handlers())
     app.add_handlers(generation_handler.get_handlers())
     app.add_handlers(credits_handler.get_handlers())

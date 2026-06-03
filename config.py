@@ -23,6 +23,67 @@ COMFY_POLL_INTERVAL = 2
 COMFY_TIMEOUT = 1500
 COMFY_DEFAULT_WORKFLOW = "z-image-turbo"
 
+# ---- 工作流注册表（主菜单驱动） ----
+WORKFLOW_REGISTRY = [
+    {
+        "key": "z-image-turbo",
+        "emoji": "🖼",
+        "label": "文生图",
+        "description": "输入文字描述，AI 生成图片",
+        "how_to": (
+            "直接发送描述词即可\n"
+            "例如：a cat sitting on a sofa, masterpiece, best quality\n\n"
+            "可选：在 ComfyUI 设置中自定义 Prompt，固定描述风格"
+        ),
+        "backend": "comfyui",
+        "comfy_workflow": "z-image-turbo",
+        "input_type": "text",
+    },
+    {
+        "key": "image-to-real",
+        "emoji": "🔄",
+        "label": "图生图",
+        "description": "上传图片，AI 基于图片风格生成新图",
+        "how_to": (
+            "1. 发送一张图片（可附带文字描述）\n"
+            "2. Bot 将基于该图片生成新图片\n"
+            "例如：发一张真人照片 + 描述 'anime style, portrait'"
+        ),
+        "backend": "comfyui",
+        "comfy_workflow": "image-to-real",
+        "input_type": "photo",
+    },
+    {
+        "key": "qwen-image-edit",
+        "emoji": "✏️",
+        "label": "图片编辑",
+        "description": "上传图片后持续修改，支持多轮编辑",
+        "how_to": (
+            "第一轮：发送一张图片 → AI 编辑后返回结果\n"
+            "第二轮：回复结果图 + 新指令 → 继续修改\n"
+            "例如：回复图片 + 'change hair color to blue'\n\n"
+            "想换底图？直接发新图片即可重新开始"
+        ),
+        "backend": "comfyui",
+        "comfy_workflow": "qwen-image-edit",
+        "input_type": "photo",
+    },
+    {
+        "key": "image-to-video",
+        "emoji": "🎬",
+        "label": "图生视频",
+        "description": "上传图片，AI 生成短视频",
+        "how_to": (
+            "发送一张图片（可附带描述词）\n"
+            "例如：发一张风景照 → 生成动态视频\n\n"
+            "可在 ComfyUI 设置中调整视频方向和长度"
+        ),
+        "backend": "comfyui",
+        "comfy_workflow": "image-to-video",
+        "input_type": "photo",
+    },
+]
+
 COMFY_WORKFLOWS = {
     "z-image-turbo": {
         "label": "Z-Image-Turbo（文生图）",

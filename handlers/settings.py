@@ -2,7 +2,7 @@ import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest
-from telegram.ext import CallbackQueryHandler, CommandHandler
+from telegram.ext import CallbackQueryHandler
 
 from config import SIZE_PRESETS, DEFAULT_USER_SETTINGS
 from services import sd_api, storage
@@ -513,8 +513,6 @@ def _save_settings(context, user_id: int) -> None:
 
 def get_handlers() -> list:
     return [
-        CommandHandler("start", show_main_menu, filters=_user_auth_filter()),
-        CommandHandler("help", show_main_menu, filters=_user_auth_filter()),
         CallbackQueryHandler(auth_callback(show_settings), pattern="^settings_menu$|^settings_back$"),
         CallbackQueryHandler(auth_callback(show_size_menu), pattern="^set_size$"),
         CallbackQueryHandler(auth_callback(pick_size), pattern="^pick_size_"),

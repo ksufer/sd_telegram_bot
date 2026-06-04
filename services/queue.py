@@ -201,8 +201,11 @@ class GenerationQueue:
                 if seed == -1:
                     seed = random.randint(0, 2**63 - 1)
                 uploaded_image = settings.get("_uploaded_image")
+                uploaded_images = settings.get("_uploaded_images")
                 comfy_output, actual_seed = await comfy_api.generate(
-                    translated, settings, seed, uploaded_image=uploaded_image,
+                    translated, settings, seed,
+                    uploaded_image=uploaded_image,
+                    uploaded_images=uploaded_images,
                 )
 
         except Exception:
@@ -377,9 +380,17 @@ def _build_payload(settings: dict, prompt: str) -> dict:
     return payload
 
 
+def _truncate_for_caption(text: str, max_chars: int = 700) -> str:
+    """截断过长文本以适配 Telegram caption 1024 字符限制"""
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars - 1] + "…"
+
+
 def _build_sd_info(settings: dict, translated: str, seed: int, elapsed: float) -> str:
+    prompt_text = _truncate_for_caption(html.escape(f"{DEFAULT_PROMPT_PREFIX} {translated}"))
     return (
-        f"<b>Prompt:</b> {html.escape(f'{DEFAULT_PROMPT_PREFIX} {translated}')}\n"
+        f"<b>Prompt:</b> {prompt_text}\n"
         f"<b>Size:</b> {settings['width']}x{settings['height']}\n"
         f"<b>Steps:</b> {settings['steps']} | <b>CFG:</b> {settings['cfg_scale']}\n"
         f"<b>Sampler:</b> {html.escape(settings['sampler'])}\n"
@@ -423,10 +434,10 @@ def _build_comfy_info(task, settings: dict, translated: str, seed: int, elapsed:
     if translated and translated.strip():
         actual = html.escape(translated)
         if translated == task.prompt:
-            info_parts.insert(0, f"<b>Prompt:</b> {actual}")
+            info_parts.insert(0, f"<b>Prompt:</b> {_truncate_for_caption(actual)}")
         else:
-            info_parts.insert(0, f"<b>实际 Prompt:</b> {actual}")
-            info_parts.insert(0, f"<b>原始 Prompt:</b> {html.escape(task.prompt)}")
+            info_parts.insert(0, f"<b>实际 Prompt:</b> {_truncate_for_caption(actual)}")
+            info_parts.insert(0, f"<b>原始 Prompt:</b> {_truncate_for_caption(html.escape(task.prompt), 350)}")
     return "\n".join(info_parts)
 
 

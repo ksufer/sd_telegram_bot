@@ -43,19 +43,53 @@ def _extract_prompt(message, bot_username: str) -> tuple[str | None, bool]:
     return prompt, True
 
 
+def _clean_caption(message, context) -> str:
+    """提取并清理图片 caption（群聊中去除 @bot 提及）。"""
+    caption = (message.caption or "").strip()
+    if caption and message.chat.type in ("group", "supergroup"):
+        bot_username = context.bot.username
+        if bot_username:
+            entities = message.parse_caption_entities(types=[MessageEntity.MENTION])
+            for text in entities.values():
+                if text.lower() == f"@{bot_username.lower()}":
+                    caption = caption.replace(text, "", 1).strip()
+                    break
+    return caption
+
+
+def _clear_firstlast_state(user_data: dict | None) -> None:
+    """清除 firstlast-video 多步交互状态。"""
+    if not user_data:
+        return
+    user_data.pop("_firstlast_start_frame", None)
+    user_data.pop("_firstlast_end_frame", None)
+
+
 async def handle_text(update, context):
     message = update.effective_message
     if message is None:
         return
     chat = update.effective_chat
 
-    logger.info("DEBUG handle_text: chat_type=%s text=%.80s",
-                chat.type, message.text if message.text else None)
-
-    # 权限检查
     user = update.effective_user
     if not is_authorized(user.id if user else 0, chat.id, chat.type):
         return
+
+    # firstlast-video 等待文字描述（优先级高于其他 waiting_input）
+    _firstlast_frames = None
+    _firstlast_prompt = None
+    if context.user_data is not None:
+        start_frame = context.user_data.get("_firstlast_start_frame")
+        end_frame = context.user_data.get("_firstlast_end_frame")
+        if start_frame and end_frame:
+            prompt_text = (message.text or "").strip()
+            if not prompt_text:
+                await message.reply_text("请输入视频描述文字，或发送 /cancel 取消。")
+                return
+            _firstlast_frames = {"start": start_frame, "end": end_frame}
+            _firstlast_prompt = prompt_text
+            # 继续执行，不 return —— 让后续额度检查+任务创建流程处理
+            # 注意：不在此处清除 user_data 状态，保留到 enqueue 成功后再清理（B1 修复）
 
     # 等待输入处理（种子等）— 必须在 _extract_prompt 之前，避免被拦截
     if context.user_data is not None:
@@ -77,8 +111,18 @@ async def handle_text(update, context):
     else:
         settings = copy.deepcopy(DEFAULT_USER_SETTINGS)
 
-    logger.info("DEBUG settings: user_id=%s translate=%s model=%s",
-                user_id, settings.get("translate"), settings.get("model"))
+    # 自动检测：回复机器人图片消息 + 文字 → 临时使用 qwen-image-edit
+    is_reply_to_bot_image = (
+        message.reply_to_message
+        and message.reply_to_message.from_user
+        and message.reply_to_message.from_user.id == context.bot.id
+        and message.reply_to_message.photo
+    )
+    auto_edit = is_reply_to_bot_image and (message.text or "").strip()
+
+    # auto_edit 触发时清除 firstlast 状态（B2 修复：用户意图已切换）
+    if auto_edit and context.user_data:
+        _clear_firstlast_state(context.user_data)
 
     # 多轮编辑检测：回复 bot 图片结果 + 文字指令（在 _extract_prompt 之前，无需 @bot）
     wf_key = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
@@ -86,8 +130,8 @@ async def handle_text(update, context):
     try:
         if (
             settings.get("backend") == "comfyui"
-            and wf_key == "qwen-image-edit"
-            and wf_config.get("is_img2img")
+            and (wf_key == "qwen-image-edit" or auto_edit)
+            and (wf_config.get("is_img2img") if wf_key == "qwen-image-edit" else True)
             and message.reply_to_message
             and message.reply_to_message.from_user
             and message.reply_to_message.from_user.id == context.bot.id
@@ -159,6 +203,12 @@ async def handle_text(update, context):
 
             # 入队
             task_settings = copy.deepcopy(settings)
+            if auto_edit:
+                task_settings["backend"] = "comfyui"
+                task_settings["comfy_workflow"] = "qwen-image-edit"
+                qwen_wf = COMFY_WORKFLOWS.get("qwen-image-edit", {})
+                if qwen_wf.get("default_model"):
+                    task_settings["comfy_model"] = qwen_wf["default_model"]
             task_settings["_uploaded_image"] = uploaded_name
 
             reply_to = message.message_id if chat.type in ("group", "supergroup") else None
@@ -218,9 +268,12 @@ async def handle_text(update, context):
         return
 
     # 图生图工作流拦截纯文字消息（多轮编辑未触发时）
+    # firstlast-video: 已收到首尾帧时正常创建任务，无帧时提示发首帧
     if settings.get("backend") == "comfyui":
-        if wf_config.get("is_img2img"):
-            if wf_key == "qwen-image-edit":
+        if wf_config.get("is_img2img") and not _firstlast_frames:
+            if wf_key == "firstlast-video":
+                await message.reply_text("当前工作流是首尾帧生视频模式，请先发送首帧图片。")
+            elif wf_key == "qwen-image-edit":
                 await message.reply_text(
                     "当前工作流是图生图模式，请直接发送图片，"
                     "或回复之前的生成结果并输入文字来继续修改。"
@@ -263,11 +316,15 @@ async def handle_text(update, context):
 
     reply_to = message.message_id if chat.type in ("group", "supergroup") else None
 
+    task_settings = copy.deepcopy(settings)
+    if _firstlast_frames:
+        task_settings["_uploaded_images"] = _firstlast_frames
+
     task = GenerationTask(
         user_id=user_id,
         chat_id=chat.id,
-        prompt=prompt,
-        settings=copy.deepcopy(settings),
+        prompt=_firstlast_prompt if _firstlast_prompt else prompt,
+        settings=task_settings,
         status_message_id=status_id,
         original_message_id=message.message_id,
         reply_to_message_id=reply_to,
@@ -283,6 +340,10 @@ async def handle_text(update, context):
             await credits.refund_one(user_id)
         await message.reply_text("任务提交失败，请稍后重试。")
         return
+
+    # enqueue 成功后清理 firstlast 状态（B1 修复：只在成功路径清除）
+    if _firstlast_frames:
+        _clear_firstlast_state(context.user_data)
 
     if ahead == 0:
         try:
@@ -375,11 +436,16 @@ async def handle_cancel(update, context):
 
     waiting = context.user_data.get("_waiting_input") if context.user_data else None
     waiting_seed = context.user_data.get("_waiting_seed") if context.user_data else None
+    has_firstlast = (
+        context.user_data.get("_firstlast_start_frame")
+        or context.user_data.get("_firstlast_end_frame")
+    ) if context.user_data else False
 
-    if waiting or waiting_seed:
+    if waiting or waiting_seed or has_firstlast:
         if context.user_data:
             context.user_data["_waiting_input"] = None
             context.user_data["_waiting_seed"] = False
+            _clear_firstlast_state(context.user_data)
         user_id = update.effective_user.id
         settings = _ensure_settings(context, user_id)
         await update.message.reply_text("已取消。")
@@ -469,8 +535,26 @@ async def handle_photo(update, context):
     if not is_authorized(user_id, chat.id, chat.type):
         return
 
-    # 群聊中需要 @bot 才触发（与 handle_text 行为一致）
-    if chat.type in ("group", "supergroup"):
+    # 加载设置
+    if context.user_data is not None:
+        settings = _ensure_settings(context, user_id)
+    else:
+        settings = copy.deepcopy(DEFAULT_USER_SETTINGS)
+
+    # 自动检测：回复机器人消息 + 图片带文字 → 临时使用 qwen-image-edit
+    is_reply_to_bot = (
+        message.reply_to_message
+        and message.reply_to_message.from_user
+        and message.reply_to_message.from_user.id == context.bot.id
+    )
+    auto_edit = is_reply_to_bot and message.caption and message.caption.strip()
+
+    # auto_edit 触发时清除 firstlast 状态（B3 修复：用户意图已切换）
+    if auto_edit and context.user_data:
+        _clear_firstlast_state(context.user_data)
+
+    # 群聊中需要 @bot 才触发（回复机器人消息时除外）
+    if chat.type in ("group", "supergroup") and not auto_edit:
         bot_username = context.bot.username
         if not bot_username:
             return
@@ -482,18 +566,75 @@ async def handle_photo(update, context):
         if not mentioned:
             return
 
-    # 确认是 ComfyUI 模式且当前 workflow 是图生图
-    if context.user_data is not None:
-        settings = _ensure_settings(context, user_id)
+    # 确认是 ComfyUI 模式且当前 workflow 是图生图（自动编辑时绕过）
+    if not auto_edit:
+        if settings.get("backend", "sd") != "comfyui":
+            return  # SD 模式不处理图片
+    if auto_edit:
+        wf_key = "qwen-image-edit"
+        wf_config = COMFY_WORKFLOWS.get("qwen-image-edit", {})
     else:
-        settings = copy.deepcopy(DEFAULT_USER_SETTINGS)
+        wf_key = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
+        wf_config = COMFY_WORKFLOWS.get(wf_key, {})
+        if not wf_config.get("is_img2img"):
+            return  # 文生图 workflow 不处理图片
 
-    if settings.get("backend", "sd") != "comfyui":
-        return  # SD 模式不处理图片
-    wf_key = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
-    wf_config = COMFY_WORKFLOWS.get(wf_key, {})
-    if not wf_config.get("is_img2img"):
-        return  # 文生图 workflow 不处理图片
+    # ── firstlast-video 多步交互（额度检查之前分流）──
+    if wf_key == "firstlast-video" and not auto_edit:
+        user_data = context.user_data
+        if user_data is None:
+            await message.reply_text("会话状态不可用，请重新发送 /start。")
+            return
+
+        has_start = "_firstlast_start_frame" in user_data
+
+        if not has_start:
+            # 步骤1: 收到首帧 → 仅上传缓存，不扣额度，不创建任务
+            try:
+                photo_file = await message.photo[-1].get_file()
+                image_bytes = io.BytesIO()
+                await photo_file.download_to_memory(image_bytes)
+                image_bytes.seek(0)
+                uploaded_name = await comfy_api.upload_image(image_bytes.read())
+            except Exception as e:
+                logger.error("首帧上传失败: %s", e)
+                await message.reply_text(f"上传首帧失败: {e}")
+                return
+            user_data["_firstlast_start_frame"] = uploaded_name
+            await message.reply_text("✅ 已收到首帧图片，请发送尾帧图片（可附带文字描述）。")
+            return
+
+        # 步骤2: 收到尾帧
+        try:
+            photo_file = await message.photo[-1].get_file()
+            image_bytes = io.BytesIO()
+            await photo_file.download_to_memory(image_bytes)
+            image_bytes.seek(0)
+            uploaded_name = await comfy_api.upload_image(image_bytes.read())
+        except Exception as e:
+            logger.error("尾帧上传失败: %s", e)
+            await message.reply_text(f"上传尾帧失败: {e}")
+            return
+        user_data["_firstlast_end_frame"] = uploaded_name
+
+        # 提取 caption（复用 _clean_caption）
+        caption = _clean_caption(message, context)
+
+        if caption:
+            # 有 caption → 清除状态，继续走到额度检查 + 任务创建
+            start_frame = user_data.get("_firstlast_start_frame")
+            end_frame = user_data.get("_firstlast_end_frame")
+            _clear_firstlast_state(user_data)
+            # 设置局部变量，后续任务创建代码会用到
+            _firstlast_frames = {"start": start_frame, "end": end_frame}
+            _firstlast_prompt = caption
+        else:
+            # 无 caption → 提示输入文字，不扣额度
+            await message.reply_text("✅ 已收到尾帧图片，请发送视频描述文字。")
+            return
+    else:
+        _firstlast_frames = None
+        _firstlast_prompt = None
 
     # 额度检查
     is_admin = ADMIN_USER_ID is not None and user_id == ADMIN_USER_ID
@@ -521,54 +662,57 @@ async def handle_photo(update, context):
         logger.warning("创建状态消息失败")
         status_id = None
 
-    # 下载 Telegram 图片
-    try:
-        photo_file = await message.photo[-1].get_file()
-        image_bytes = io.BytesIO()
-        await photo_file.download_to_memory(image_bytes)
-        image_bytes.seek(0)
-    except Exception as e:
-        logger.error("下载图片失败: %s", e)
-        if credit_charged:
-            await credits.refund_one(user_id)
-        await message.reply_text("下载图片失败，请稍后重试。")
-        return
+    # 下载 Telegram 图片（firstlast-video 已在分流阶段下载上传，跳过）
+    if _firstlast_frames is None:
+        try:
+            photo_file = await message.photo[-1].get_file()
+            image_bytes = io.BytesIO()
+            await photo_file.download_to_memory(image_bytes)
+            image_bytes.seek(0)
+        except Exception as e:
+            logger.error("下载图片失败: %s", e)
+            if credit_charged:
+                await credits.refund_one(user_id)
+            await message.reply_text("下载图片失败，请稍后重试。")
+            return
 
-    # 上传到 ComfyUI
-    try:
-        if status_id is not None:
-            await retry_on_network_error(
-                lambda: context.bot.edit_message_text(
-                    "正在上传图片到 ComfyUI...", chat_id=chat.id, message_id=status_id,
-                ),
-                max_retries=2,
-            )
-        uploaded_name = await comfy_api.upload_image(image_bytes.read())
-    except Exception as e:
-        logger.error("上传图片到 ComfyUI 失败: %s", e)
-        if credit_charged:
-            await credits.refund_one(user_id)
-        await message.reply_text(f"上传图片失败: {e}")
-        return
+        # 上传到 ComfyUI
+        try:
+            if status_id is not None:
+                await retry_on_network_error(
+                    lambda: context.bot.edit_message_text(
+                        "正在上传图片到 ComfyUI...", chat_id=chat.id, message_id=status_id,
+                    ),
+                    max_retries=2,
+                )
+            uploaded_name = await comfy_api.upload_image(image_bytes.read())
+        except Exception as e:
+            logger.error("上传图片到 ComfyUI 失败: %s", e)
+            if credit_charged:
+                await credits.refund_one(user_id)
+            await message.reply_text(f"上传图片失败: {e}")
+            return
+    else:
+        uploaded_name = None
 
     # 创建任务并入队
     task_settings = copy.deepcopy(settings)
-    task_settings["_uploaded_image"] = uploaded_name
+    if auto_edit:
+        task_settings["backend"] = "comfyui"
+        task_settings["comfy_workflow"] = "qwen-image-edit"
+        qwen_wf = COMFY_WORKFLOWS.get("qwen-image-edit", {})
+        if qwen_wf.get("default_model"):
+            task_settings["comfy_model"] = qwen_wf["default_model"]
+    if _firstlast_frames:
+        task_settings["_uploaded_images"] = _firstlast_frames
+    else:
+        task_settings["_uploaded_image"] = uploaded_name
 
     # 提取 caption 作为 prompt（仅 use_caption_as_prompt=True 的工作流）
-    if wf_config.get("use_caption_as_prompt"):
-        caption = (message.caption or "").strip()
-        # 群聊用 entity 方式去除 @bot
-        if caption and chat.type in ("group", "supergroup"):
-            bot_username = context.bot.username
-            if bot_username:
-                mention = f"@{bot_username}".lower()
-                entities = message.parse_caption_entities(types=[MessageEntity.MENTION])
-                for text in entities.values():
-                    if text.lower() == mention:
-                        caption = caption.replace(text, "", 1).strip()
-                        break
-        prompt_text = caption  # 允许空 caption
+    if _firstlast_frames:
+        prompt_text = _firstlast_prompt
+    elif wf_config.get("use_caption_as_prompt"):
+        prompt_text = _clean_caption(message, context)
     else:
         prompt_text = ""  # 其他 img2img 保持原行为
 

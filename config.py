@@ -82,6 +82,37 @@ WORKFLOW_REGISTRY = [
         "comfy_workflow": "image-to-video",
         "input_type": "photo",
     },
+    {
+        "key": "sdxl",
+        "emoji": "🎨",
+        "label": "文生图（SDXL）",
+        "description": "SDXL 模型文生图，高质量大图",
+        "how_to": (
+            "直接发送描述词即可\n"
+            "例如：a cat sitting on a sofa\n\n"
+            "提示词会自动添加画质前缀\n"
+            "可在 ComfyUI 设置中切换模型和尺寸"
+        ),
+        "backend": "comfyui",
+        "comfy_workflow": "sdxl",
+        "input_type": "text",
+    },
+    {
+        "key": "firstlast-video",
+        "emoji": "🎞️",
+        "label": "首尾帧生视频",
+        "description": "上传首帧+尾帧图片，AI 生成过渡视频",
+        "how_to": (
+            "1. 先发送首帧图片（群聊需 @bot）\n"
+            "2. 再发送尾帧图片，可附带文字描述（群聊需 @bot）\n"
+            "3. 如未附带描述，再发送文字说明\n\n"
+            "例如：首帧=坐着的猫，尾帧=站立的猫\n"
+            "描述=cat slowly standing up"
+        ),
+        "backend": "comfyui",
+        "comfy_workflow": "firstlast-video",
+        "input_type": "photo",
+    },
 ]
 
 COMFY_WORKFLOWS = {
@@ -155,6 +186,46 @@ COMFY_WORKFLOWS = {
         "video_height_key": "height",
         "video_frames_node": "129:98",
         "video_frames_key": "length",
+        "default_model": "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+    },
+    "sdxl": {
+        "label": "SDXL（文生图）",
+        "path": "data/sdxl.json",
+        "is_img2img": False,
+        "prompt_node": ["6", "15"],
+        "prompt_key": "text",
+        "prompt_prefix": (
+            "masterpiece, best quality, ultra-detailed, very aesthetic, "
+            "depth of field, best lighting, detailed illustration, "
+            "detailed background, cinematic, ambient occlusion, "
+            "raytracing, soft lighting, blum effect, "
+        ),
+        "seed_node": ["10", "11"],
+        "seed_key": "noise_seed",
+        "model_node": ["4", "12"],
+        "model_key": "ckpt_name",
+        "model_loader_class": "CheckpointLoaderSimple",
+        "width_node": "5",
+        "width_key": "width",
+        "height_node": "5",
+        "height_key": "height",
+        "default_model": "miaomiaoHarem_v20.safetensors",
+    },
+    "firstlast-video": {
+        "label": "首尾帧生视频（Wan2.2）",
+        "path": "data/video_wan2_2_14B_flf2v.json",
+        "is_img2img": True,
+        "output_type": "video",
+        "model_selectable": False,
+        "use_caption_as_prompt": True,
+        "prompt_node": "6",
+        "prompt_key": "text",
+        "seed_node": "57",
+        "seed_key": "noise_seed",
+        "load_image_nodes": {
+            "start": {"node": "68", "key": "image"},
+            "end": {"node": "62", "key": "image"},
+        },
         "default_model": "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
     },
 }

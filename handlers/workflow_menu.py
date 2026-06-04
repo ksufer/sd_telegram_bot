@@ -13,6 +13,7 @@ from config import (
     COMFY_VIDEO_FRAMES_PRESETS,
 )
 from handlers import auth_callback, _user_auth_filter
+from handlers.generation import _clear_firstlast_state
 from handlers.settings import (
     _ensure_settings,
     _save_settings,
@@ -71,6 +72,10 @@ async def _switch_to_workflow(update, context, workflow_entry: dict):
             settings["comfy_model"] = default_model
 
     _save_settings(context, user_id)
+
+    # 清除 firstlast-video 多步交互状态（切换工作流时重置）
+    if context.user_data:
+        _clear_firstlast_state(context.user_data)
 
 
 # ═══ 主菜单 ═══

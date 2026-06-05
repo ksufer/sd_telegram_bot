@@ -329,8 +329,8 @@ COMFY_VIDEO_RESOLUTIONS = {
 
 def compute_video_dimensions(aspect_key: str, resolution_key: str) -> tuple[int, int]:
     """根据比例和画质计算视频宽高，取整到 16 的倍数。"""
-    ratio = COMFY_VIDEO_ASPECTS[aspect_key]["ratio"]
-    short = COMFY_VIDEO_RESOLUTIONS[resolution_key]["short_side"]
+    ratio = COMFY_VIDEO_ASPECTS.get(aspect_key, COMFY_VIDEO_ASPECTS["9:16"])["ratio"]
+    short = COMFY_VIDEO_RESOLUTIONS.get(resolution_key, COMFY_VIDEO_RESOLUTIONS["480p"])["short_side"]
 
     if ratio >= 1:
         # 横版或方形：短边 = 高度

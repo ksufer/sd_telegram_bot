@@ -75,7 +75,7 @@ async def handle_text(update, context):
     if not is_authorized(user.id if user else 0, chat.id, chat.type):
         return
 
-    # firstlast-video 等待文字描述（优先级高于其他 waiting_input）
+    # 多图工作流等待文字描述（优先级高于其他 waiting_input）
     _firstlast_frames = None
     _firstlast_prompt = None
     if context.user_data is not None:
@@ -84,9 +84,13 @@ async def handle_text(update, context):
         if start_frame and end_frame:
             prompt_text = (message.text or "").strip()
             if not prompt_text:
-                await message.reply_text("请输入视频描述文字，或发送 /cancel 取消。")
+                await message.reply_text("请输入编辑描述文字，或发送 /cancel 取消。")
                 return
-            _firstlast_frames = {"start": start_frame, "end": end_frame}
+            # 从当前 workflow 配置读取角色名（如 firstlast: start/end, qwen-2pic: image1/image2）
+            wf_key = context.user_data.get("settings", {}).get("comfy_workflow", "")
+            wf_config = COMFY_WORKFLOWS.get(wf_key, {})
+            roles = list(wf_config.get("load_image_nodes", {}).keys()) or ["start", "end"]
+            _firstlast_frames = {roles[0]: start_frame, roles[1]: end_frame}
             _firstlast_prompt = prompt_text
             # 继续执行，不 return —— 让后续额度检查+任务创建流程处理
             # 注意：不在此处清除 user_data 状态，保留到 enqueue 成功后再清理（B1 修复）
@@ -579,17 +583,20 @@ async def handle_photo(update, context):
         if not wf_config.get("is_img2img"):
             return  # 文生图 workflow 不处理图片
 
-    # ── firstlast-video 多步交互（额度检查之前分流）──
-    if wf_key == "firstlast-video" and not auto_edit:
+    # ── 多图工作流交互（额度检查之前分流）──
+    if wf_config.get("load_image_nodes") and not auto_edit:
         user_data = context.user_data
         if user_data is None:
             await message.reply_text("会话状态不可用，请重新发送 /start。")
             return
 
+        # 从配置读取角色名（如 firstlast: start/end, qwen-2pic: image1/image2）
+        roles = list(wf_config["load_image_nodes"].keys())
+
         has_start = "_firstlast_start_frame" in user_data
 
         if not has_start:
-            # 步骤1: 收到首帧 → 仅上传缓存，不扣额度，不创建任务
+            # 步骤1: 收到第一张图片 → 仅上传缓存，不扣额度，不创建任务
             try:
                 photo_file = await message.photo[-1].get_file()
                 image_bytes = io.BytesIO()
@@ -597,14 +604,14 @@ async def handle_photo(update, context):
                 image_bytes.seek(0)
                 uploaded_name = await comfy_api.upload_image(image_bytes.read())
             except Exception as e:
-                logger.error("首帧上传失败: %s", e)
-                await message.reply_text(f"上传首帧失败: {e}")
+                logger.error("第一张图片上传失败: %s", e)
+                await message.reply_text(f"上传第一张图片失败: {e}")
                 return
             user_data["_firstlast_start_frame"] = uploaded_name
-            await message.reply_text("✅ 已收到首帧图片，请发送尾帧图片（可附带文字描述）。")
+            await message.reply_text("✅ 已收到第一张图片，请发送第二张图片（可附带文字描述）。")
             return
 
-        # 步骤2: 收到尾帧
+        # 步骤2: 收到第二张图片
         try:
             photo_file = await message.photo[-1].get_file()
             image_bytes = io.BytesIO()
@@ -612,8 +619,8 @@ async def handle_photo(update, context):
             image_bytes.seek(0)
             uploaded_name = await comfy_api.upload_image(image_bytes.read())
         except Exception as e:
-            logger.error("尾帧上传失败: %s", e)
-            await message.reply_text(f"上传尾帧失败: {e}")
+            logger.error("第二张图片上传失败: %s", e)
+            await message.reply_text(f"上传第二张图片失败: {e}")
             return
         user_data["_firstlast_end_frame"] = uploaded_name
 
@@ -626,11 +633,11 @@ async def handle_photo(update, context):
             end_frame = user_data.get("_firstlast_end_frame")
             _clear_firstlast_state(user_data)
             # 设置局部变量，后续任务创建代码会用到
-            _firstlast_frames = {"start": start_frame, "end": end_frame}
+            _firstlast_frames = {roles[0]: start_frame, roles[1]: end_frame}
             _firstlast_prompt = caption
         else:
             # 无 caption → 提示输入文字，不扣额度
-            await message.reply_text("✅ 已收到尾帧图片，请发送视频描述文字。")
+            await message.reply_text("✅ 已收到第二张图片，请发送编辑描述文字。")
             return
     else:
         _firstlast_frames = None

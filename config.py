@@ -113,6 +113,21 @@ WORKFLOW_REGISTRY = [
         "comfy_workflow": "firstlast-video",
         "input_type": "photo",
     },
+    {
+        "key": "qwen-2pic-edit",
+        "emoji": "\U0001f5bc️",
+        "label": "Qwen 双图编辑",
+        "description": "上传2张图片+提示词，AI 合成编辑（换脸/换装）",
+        "how_to": (
+            "1. 发送第一张图片（群聊需 @bot）\n"
+            "2. 发送第二张图片，可附带文字描述（群聊需 @bot）\n"
+            "3. 若未附带描述，再发送文字描述\n\n"
+            "示例：图1=人物A，图2=人物B\n描述=将图1的脸换成图2的脸"
+        ),
+        "backend": "comfyui",
+        "comfy_workflow": "qwen-2pic-edit",
+        "input_type": "photo",
+    },
 ]
 
 COMFY_WORKFLOWS = {
@@ -233,6 +248,25 @@ COMFY_WORKFLOWS = {
         "video_frames_node": "67",
         "video_frames_key": "length",
         "default_model": "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+    },
+    "qwen-2pic-edit": {
+        "label": "Qwen 双图编辑",
+        "path": "data/qwen_2pic_edit.json",
+        "is_img2img": True,
+        "model_selectable": True,
+        "use_caption_as_prompt": True,
+        "prompt_node": "119",
+        "prompt_key": "prompt",
+        "seed_node": "117",
+        "seed_key": "value",
+        "model_node": "118",
+        "model_key": "ckpt_name",
+        "model_loader_class": "CheckpointLoaderSimple",
+        "load_image_nodes": {
+            "image1": {"node": "78", "key": "image"},
+            "image2": {"node": "122", "key": "image"},
+        },
+        "default_model": "Qwen-Rapid-AIO-NSFW-v11.1.safetensors",
     },
 }
 

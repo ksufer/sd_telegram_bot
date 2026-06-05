@@ -6,7 +6,8 @@ from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import CallbackQueryHandler
 
 from config import COMFY_SIZE_PRESETS, COMFY_WORKFLOWS, COMFY_DEFAULT_WORKFLOW
-from config import COMFY_VIDEO_ORIENTATIONS, COMFY_VIDEO_FRAMES_PRESETS
+from config import COMFY_VIDEO_ASPECTS, COMFY_VIDEO_RESOLUTIONS, COMFY_VIDEO_FRAMES_PRESETS
+from config import compute_video_dimensions
 from handlers import auth_callback
 from handlers.settings import _ensure_settings, _save_settings
 from services import comfy_api
@@ -60,16 +61,23 @@ def _comfy_settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
         text += f"\n尺寸: {current_w}×{current_h}"
         keyboard.insert(1, [InlineKeyboardButton("切换尺寸", callback_data="comfy_size")])
 
-    # 视频 workflow 显示方向和长度
+    # 视频 workflow 显示比例、画质和长度
     if is_video:
-        orient = settings.get("comfy_video_orientation", "portrait")
-        orient_cfg = COMFY_VIDEO_ORIENTATIONS.get(orient, COMFY_VIDEO_ORIENTATIONS["portrait"])
+        aspect = settings.get("comfy_video_aspect", "9:16")
+        aspect_cfg = COMFY_VIDEO_ASPECTS.get(aspect, COMFY_VIDEO_ASPECTS["9:16"])
+        resolution = settings.get("comfy_video_resolution", "480p")
+        resolution_cfg = COMFY_VIDEO_RESOLUTIONS.get(resolution, COMFY_VIDEO_RESOLUTIONS["480p"])
+        w, h = compute_video_dimensions(aspect, resolution)
         frames_key = str(settings.get("comfy_video_frames", 81))
         frames_cfg = COMFY_VIDEO_FRAMES_PRESETS.get(frames_key, COMFY_VIDEO_FRAMES_PRESETS["81"])
-        text += f"\n视频方向: {orient_cfg['label']}"
+        text += f"\n视频比例: {aspect_cfg['label']}"
+        text += f"\n视频画质: {resolution_cfg['label']} ({w}×{h})"
         text += f"\n视频长度: {frames_cfg['label']}"
         keyboard.insert(1, [
-            InlineKeyboardButton("视频方向", callback_data="comfy_video_orientation"),
+            InlineKeyboardButton("视频比例", callback_data="comfy_video_aspect"),
+            InlineKeyboardButton("视频画质", callback_data="comfy_video_resolution"),
+        ])
+        keyboard.insert(2, [
             InlineKeyboardButton("视频长度", callback_data="comfy_video_length"),
         ])
 
@@ -358,16 +366,31 @@ async def clear_comfy_prompt(update, context):
     await _reply_menu(query, text, markup)
 
 
-# ═══ 视频方向/长度菜单 ═══
+# ═══ 视频比例/画质/长度菜单 ═══
 
-def _comfy_video_orientation_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
-    current = settings.get("comfy_video_orientation", "portrait")
-    text = "<b>选择视频方向</b>"
+def _comfy_video_aspect_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
+    current = settings.get("comfy_video_aspect", "9:16")
+    text = "<b>选择视频比例</b>"
     keyboard = []
-    for key, preset in COMFY_VIDEO_ORIENTATIONS.items():
+    for key, preset in COMFY_VIDEO_ASPECTS.items():
         prefix = "✓ " if key == current else ""
         keyboard.append([InlineKeyboardButton(
-            f"{prefix}{preset['label']}", callback_data=f"comfy_video_orientation:{key}"
+            f"{prefix}{preset['label']}", callback_data=f"comfy_video_aspect:{key}"
+        )])
+    keyboard.append([InlineKeyboardButton("🔙 返回主菜单", callback_data="main_menu")])
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def _comfy_video_resolution_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
+    current = settings.get("comfy_video_resolution", "480p")
+    aspect = settings.get("comfy_video_aspect", "9:16")
+    text = "<b>选择视频画质</b>"
+    keyboard = []
+    for key, preset in COMFY_VIDEO_RESOLUTIONS.items():
+        prefix = "✓ " if key == current else ""
+        w, h = compute_video_dimensions(aspect, key)
+        keyboard.append([InlineKeyboardButton(
+            f"{prefix}{preset['label']} ({w}×{h})", callback_data=f"comfy_video_resolution:{key}"
         )])
     keyboard.append([InlineKeyboardButton("🔙 返回主菜单", callback_data="main_menu")])
     return text, InlineKeyboardMarkup(keyboard)
@@ -387,29 +410,56 @@ def _comfy_video_length_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]
     return text, InlineKeyboardMarkup(keyboard)
 
 
-async def show_comfy_video_orientation_menu(update, context):
-    """显示视频方向选择菜单。"""
+async def show_comfy_video_aspect_menu(update, context):
+    """显示视频比例选择菜单。"""
     query = update.callback_query
     await _safe_answer(query)
     user_id = _get_user_id(update)
     settings = _ensure_settings(context, user_id)
-    text, markup = _comfy_video_orientation_menu(settings)
+    text, markup = _comfy_video_aspect_menu(settings)
     await _reply_menu(query, text, markup)
 
 
-async def pick_comfy_video_orientation(update, context):
-    """选择视频方向。"""
+async def pick_comfy_video_aspect(update, context):
+    """选择视频比例。"""
     query = update.callback_query
-    orientation = query.data.split(":", 1)[1]
-    if orientation not in COMFY_VIDEO_ORIENTATIONS:
-        await _safe_answer(query, "无效方向", show_alert=True)
+    aspect = query.data.split(":", 1)[1]
+    if aspect not in COMFY_VIDEO_ASPECTS:
+        await _safe_answer(query, "无效比例", show_alert=True)
         return
     user_id = _get_user_id(update)
     settings = _ensure_settings(context, user_id)
-    settings["comfy_video_orientation"] = orientation
+    settings["comfy_video_aspect"] = aspect
     _save_settings(context, user_id)
-    label = COMFY_VIDEO_ORIENTATIONS[orientation]["label"]
-    await _safe_answer(query, f"视频方向: {label}")
+    label = COMFY_VIDEO_ASPECTS[aspect]["label"]
+    await _safe_answer(query, f"视频比例: {label}")
+    text, markup = _comfy_settings_menu(settings)
+    await _reply_menu(query, text, markup)
+
+
+async def show_comfy_video_resolution_menu(update, context):
+    """显示视频画质选择菜单。"""
+    query = update.callback_query
+    await _safe_answer(query)
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    text, markup = _comfy_video_resolution_menu(settings)
+    await _reply_menu(query, text, markup)
+
+
+async def pick_comfy_video_resolution(update, context):
+    """选择视频画质。"""
+    query = update.callback_query
+    resolution = query.data.split(":", 1)[1]
+    if resolution not in COMFY_VIDEO_RESOLUTIONS:
+        await _safe_answer(query, "无效画质", show_alert=True)
+        return
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    settings["comfy_video_resolution"] = resolution
+    _save_settings(context, user_id)
+    label = COMFY_VIDEO_RESOLUTIONS[resolution]["label"]
+    await _safe_answer(query, f"视频画质: {label}")
     text, markup = _comfy_settings_menu(settings)
     await _reply_menu(query, text, markup)
 
@@ -458,11 +508,15 @@ def get_handlers() -> list:
         CallbackQueryHandler(auth_callback(reuse_comfy_seed), pattern=r"^comfy_reuse_seed_"),
         CallbackQueryHandler(auth_callback(random_comfy_seed), pattern=r"^comfy_random_seed$"),
         CallbackQueryHandler(auth_callback(clear_comfy_prompt), pattern=r"^clear_comfy_prompt$"),
-        # 视频方向/长度
-        CallbackQueryHandler(auth_callback(show_comfy_video_orientation_menu),
-                             pattern=r"^comfy_video_orientation$"),
-        CallbackQueryHandler(auth_callback(pick_comfy_video_orientation),
-                             pattern=r"^comfy_video_orientation:[a-z_]+$"),
+        # 视频比例/画质/长度
+        CallbackQueryHandler(auth_callback(show_comfy_video_aspect_menu),
+                             pattern=r"^comfy_video_aspect$"),
+        CallbackQueryHandler(auth_callback(pick_comfy_video_aspect),
+                             pattern=r"^comfy_video_aspect:"),
+        CallbackQueryHandler(auth_callback(show_comfy_video_resolution_menu),
+                             pattern=r"^comfy_video_resolution$"),
+        CallbackQueryHandler(auth_callback(pick_comfy_video_resolution),
+                             pattern=r"^comfy_video_resolution:"),
         CallbackQueryHandler(auth_callback(show_comfy_video_length_menu),
                              pattern=r"^comfy_video_length$"),
         CallbackQueryHandler(auth_callback(pick_comfy_video_length),

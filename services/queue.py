@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 
 from config import HIRES_FIX_PARAMS, COMFY_WORKFLOWS, LOG_FULL_PROMPT, DEFAULT_PROMPT_PREFIX
-from config import COMFY_VIDEO_ORIENTATIONS, COMFY_VIDEO_FRAMES_PRESETS
+from config import COMFY_VIDEO_ASPECTS, COMFY_VIDEO_RESOLUTIONS, COMFY_VIDEO_FRAMES_PRESETS
 from handlers.settings import _generation_menu
 from services import sd_api, comfy_api, credits
 from services.network import is_network_error, retry_on_network_error
@@ -407,13 +407,16 @@ def _build_comfy_info(task, settings: dict, translated: str, seed: int, elapsed:
     model_selectable = wf_config.get("model_selectable", True)
 
     if is_video:
-        # 视频工作流：显示方向/长度
-        orient = settings.get("comfy_video_orientation", "portrait")
-        orient_cfg = COMFY_VIDEO_ORIENTATIONS.get(orient, COMFY_VIDEO_ORIENTATIONS["portrait"])
+        # 视频工作流：显示比例/画质/长度
+        aspect = settings.get("comfy_video_aspect", "9:16")
+        aspect_cfg = COMFY_VIDEO_ASPECTS.get(aspect, COMFY_VIDEO_ASPECTS["9:16"])
+        resolution = settings.get("comfy_video_resolution", "480p")
+        resolution_cfg = COMFY_VIDEO_RESOLUTIONS.get(resolution, COMFY_VIDEO_RESOLUTIONS["480p"])
         frames_key = str(settings.get("comfy_video_frames", 81))
         frames_cfg = COMFY_VIDEO_FRAMES_PRESETS.get(frames_key, COMFY_VIDEO_FRAMES_PRESETS["81"])
         info_parts = [
-            f"<b>视频方向:</b> {orient_cfg['label']}",
+            f"<b>视频比例:</b> {aspect_cfg['label']}",
+            f"<b>视频画质:</b> {resolution_cfg['label']}",
             f"<b>视频长度:</b> {frames_cfg['label']}",
             f"<b>Seed:</b> {seed}",
             f"<b>耗时:</b> {elapsed:.1f}s",

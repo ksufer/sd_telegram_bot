@@ -226,6 +226,12 @@ COMFY_WORKFLOWS = {
             "start": {"node": "68", "key": "image"},
             "end": {"node": "62", "key": "image"},
         },
+        "video_width_node": "67",
+        "video_width_key": "width",
+        "video_height_node": "67",
+        "video_height_key": "height",
+        "video_frames_node": "67",
+        "video_frames_key": "length",
         "default_model": "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
     },
 }
@@ -271,11 +277,37 @@ COMFY_SIZE_PRESETS = {
     "1152x896":  {"label": "1152×896（4:3）",  "width": 1152, "height": 896},
 }
 
-# ---- ComfyUI 视频方向预设 ----
-COMFY_VIDEO_ORIENTATIONS = {
-    "portrait":  {"label": "竖版 (480×848)", "width": 480, "height": 848},
-    "landscape": {"label": "横版 (848×480)", "width": 848, "height": 480},
+# ---- ComfyUI 视频比例预设 ----
+COMFY_VIDEO_ASPECTS = {
+    "9:16": {"label": "9:16 竖版", "ratio": 9 / 16},
+    "16:9": {"label": "16:9 横版", "ratio": 16 / 9},
+    "4:3":  {"label": "4:3 横版",  "ratio": 4 / 3},
+    "3:4":  {"label": "3:4 竖版",  "ratio": 3 / 4},
+    "1:1":  {"label": "1:1 方形",  "ratio": 1 / 1},
 }
+
+# ---- ComfyUI 视频画质预设 ----
+COMFY_VIDEO_RESOLUTIONS = {
+    "480p": {"label": "480p", "short_side": 480},
+    "720p": {"label": "720p", "short_side": 720},
+}
+
+
+def compute_video_dimensions(aspect_key: str, resolution_key: str) -> tuple[int, int]:
+    """根据比例和画质计算视频宽高，取整到 16 的倍数。"""
+    ratio = COMFY_VIDEO_ASPECTS[aspect_key]["ratio"]
+    short = COMFY_VIDEO_RESOLUTIONS[resolution_key]["short_side"]
+
+    if ratio >= 1:
+        # 横版或方形：短边 = 高度
+        height = short
+        width = round(height * ratio / 16) * 16
+    else:
+        # 竖版：短边 = 宽度
+        width = short
+        height = round(width / ratio / 16) * 16
+
+    return width, height
 
 # ---- ComfyUI 视频长度预设（帧数）----
 COMFY_VIDEO_FRAMES_PRESETS = {
@@ -334,6 +366,7 @@ DEFAULT_USER_SETTINGS = {
     "comfy_height": 1280,
     "comfy_translate": False,
     "comfy_prompt": "",  # 空 = 使用 workflow 默认 prompt
-    "comfy_video_orientation": "portrait",
+    "comfy_video_aspect": "9:16",
+    "comfy_video_resolution": "480p",
     "comfy_video_frames": 81,
 }

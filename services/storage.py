@@ -29,6 +29,16 @@ def load(user_id: int, defaults: dict) -> dict:
     # 当前 settings 为一层 dict；若未来出现嵌套结构再考虑 deep merge
     merged = copy.deepcopy(defaults)
     merged.update(data)
+
+    # 向后兼容：旧 comfy_video_orientation → 新 comfy_video_aspect + comfy_video_resolution
+    if "comfy_video_orientation" in merged:
+        old = merged.pop("comfy_video_orientation")
+        if "comfy_video_aspect" not in data:
+            merged["comfy_video_aspect"] = "9:16" if old == "portrait" else "16:9"
+        if "comfy_video_resolution" not in data:
+            merged["comfy_video_resolution"] = "480p"
+        # 不自动保存，等待下次用户主动修改设置时持久化
+
     return merged
 
 

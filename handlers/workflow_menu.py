@@ -9,7 +9,8 @@ from telegram.ext import CallbackQueryHandler, CommandHandler
 from config import (
     WORKFLOW_REGISTRY,
     COMFY_WORKFLOWS,
-    COMFY_VIDEO_ORIENTATIONS,
+    COMFY_VIDEO_ASPECTS,
+    COMFY_VIDEO_RESOLUTIONS,
     COMFY_VIDEO_FRAMES_PRESETS,
 )
 from handlers import auth_callback, _user_auth_filter
@@ -151,11 +152,14 @@ def _build_workflow_detail(workflow_entry: dict, settings: dict) -> tuple[str, I
         h = settings.get("comfy_height", 1280)
         parts.append(f"尺寸={w}×{h}")
     if wf_config.get("output_type") == "video":
-        orient = settings.get("comfy_video_orientation", "portrait")
-        orient_label = COMFY_VIDEO_ORIENTATIONS.get(orient, {}).get("label", orient)
+        aspect = settings.get("comfy_video_aspect", "9:16")
+        aspect_label = COMFY_VIDEO_ASPECTS.get(aspect, {}).get("label", aspect)
+        resolution = settings.get("comfy_video_resolution", "480p")
+        resolution_label = COMFY_VIDEO_RESOLUTIONS.get(resolution, {}).get("label", resolution)
         frames_key = str(settings.get("comfy_video_frames", 81))
         frames_label = COMFY_VIDEO_FRAMES_PRESETS.get(frames_key, {}).get("label", frames_key)
-        parts.append(f"方向={orient_label}")
+        parts.append(f"比例={aspect_label}")
+        parts.append(f"画质={resolution_label}")
         parts.append(f"长度={frames_label}")
     seed = settings.get("comfy_seed", -1)
     parts.append(f"种子={'随机' if seed == -1 else str(seed)}")

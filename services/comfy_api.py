@@ -14,8 +14,8 @@ from config import (
     COMFY_DEFAULT_WORKFLOW,
     COMFY_POLL_INTERVAL,
     COMFY_TIMEOUT,
-    COMFY_VIDEO_ORIENTATIONS,
     COMFY_VIDEO_FRAMES_PRESETS,
+    compute_video_dimensions,
 )
 
 logger = logging.getLogger(__name__)
@@ -119,12 +119,13 @@ def _build_payload(workflow: dict, prompt: str, seed: int, settings: dict,
                         settings.get("comfy_width", 768))
         _set_node_input(workflow, wf["height_node"], wf["height_key"],
                         settings.get("comfy_height", 1280))
-    # Video: width/height from orientation preset
+    # Video: width/height from aspect ratio + resolution
     if "video_width_node" in wf:
-        orient = settings.get("comfy_video_orientation", "portrait")
-        cfg = COMFY_VIDEO_ORIENTATIONS.get(orient, COMFY_VIDEO_ORIENTATIONS["portrait"])
-        _set_node_input(workflow, wf["video_width_node"], wf["video_width_key"], cfg["width"])
-        _set_node_input(workflow, wf["video_height_node"], wf["video_height_key"], cfg["height"])
+        aspect = settings.get("comfy_video_aspect", "9:16")
+        resolution = settings.get("comfy_video_resolution", "480p")
+        w, h = compute_video_dimensions(aspect, resolution)
+        _set_node_input(workflow, wf["video_width_node"], wf["video_width_key"], w)
+        _set_node_input(workflow, wf["video_height_node"], wf["video_height_key"], h)
     # Video: frames (经白名单校验)
     if "video_frames_node" in wf:
         frames_key = str(settings.get("comfy_video_frames", 81))

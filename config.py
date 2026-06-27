@@ -41,13 +41,14 @@ WORKFLOW_REGISTRY = [
     },
     {
         "key": "image-to-real",
-        "emoji": "🔄",
-        "label": "图生图",
-        "description": "上传图片，AI 基于图片风格生成新图",
+        "emoji": "📸",
+        "label": "动漫转写实",
+        "description": "上传动漫图片，AI 转换为写实照片风格",
         "how_to": (
-            "1. 发送一张图片（可附带文字描述）\n"
-            "2. Bot 将基于该图片生成新图片\n"
-            "例如：发一张真人照片 + 描述 'anime style, portrait'"
+            "直接发送一张动漫/二次元图片即可\n"
+            "无需提示词，AI 自动转换为写实照片\n"
+            "发送图片时可附带文字补充细节（如发型、瞳色等）\n\n"
+            "输出图片将保持原图比例"
         ),
         "backend": "comfyui",
         "comfy_workflow": "image-to-real",
@@ -149,9 +150,11 @@ COMFY_WORKFLOWS = {
         "default_model": os.getenv("COMFY_DEFAULT_MODEL", "moodyPornMix_zitV9.safetensors"),
     },
     "image-to-real": {
-        "label": "Image-to-Real（图生图）",
+        "label": "Image-to-Real（动漫转写实）",
         "path": os.getenv("COMFY_IMG2IMG_WORKFLOW_PATH", "data/templates-image_to_real.json"),
         "is_img2img": True,
+        "use_caption_as_prompt": True,
+        "append_user_prompt": True,
         "prompt_node": "17:8",
         "prompt_key": "prompt",
         "seed_node": "17:11",

@@ -104,10 +104,21 @@ def _build_payload(workflow: dict, prompt: str, seed: int, settings: dict,
     wf = _get_wf_config(settings)
     # 优先用用户自定义 prompt，否则用传入的 prompt（文生图=用户输入，图生图=空→保留默认）
     final_prompt = settings.get("comfy_prompt", "") or prompt
+    # ignore_user_prompt=True 时仅用传入的 prompt（图片 caption），
+    # 不使用用户自定义的 comfy_prompt，确保工作流默认提示词生效
+    if wf.get("ignore_user_prompt"):
+        final_prompt = prompt
     if final_prompt:
         prefix = wf.get("prompt_prefix", "")
         if prefix:
             final_prompt = prefix + final_prompt
+        # append_user_prompt=True 时用户 prompt 追加到工作流默认提示词后面
+        if wf.get("append_user_prompt"):
+            node_id = wf["prompt_node"]
+            nid = node_id[0] if isinstance(node_id, list) else node_id
+            default_prompt = workflow[nid]["inputs"].get(wf["prompt_key"], "")
+            if default_prompt:
+                final_prompt = default_prompt + ", " + final_prompt
         _set_node_input(workflow, wf["prompt_node"], wf["prompt_key"], final_prompt)
     _set_node_input(workflow, wf["seed_node"], wf["seed_key"], seed)
     # model_selectable=False 时跳过注入，保留工作流文件里的默认模型

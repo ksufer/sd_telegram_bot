@@ -557,12 +557,13 @@ async def handle_photo(update, context):
     if auto_edit and context.user_data:
         _clear_firstlast_state(context.user_data)
 
-    # 群聊中需要 @bot 才触发（回复机器人消息时除外）
-    if chat.type in ("group", "supergroup") and not auto_edit:
+    # 群聊中需要 @bot 或回复 bot 消息才触发
+    if chat.type in ("group", "supergroup") and not is_reply_to_bot:
         bot_username = context.bot.username
         if not bot_username:
             return
-        entities = message.parse_caption_entities(types=[MessageEntity.MENTION])
+        caption = message.caption or ""
+        entities = message.parse_caption_entities(types=[MessageEntity.MENTION]) if caption else {}
         mentioned = any(
             text.lower() == f"@{bot_username.lower()}"
             for text in entities.values()
@@ -573,7 +574,11 @@ async def handle_photo(update, context):
     # 确认是 ComfyUI 模式且当前 workflow 是图生图（自动编辑时绕过）
     if not auto_edit:
         if settings.get("backend", "sd") != "comfyui":
-            return  # SD 模式不处理图片
+            await message.reply_text(
+                "当前是 SD WebUI 模式，不支持图片处理。\n"
+                "请发送 /start 选择图生图工作流（如「动漫转写实」或「图片编辑」）。"
+            )
+            return
     if auto_edit:
         wf_key = "qwen-image-edit"
         wf_config = COMFY_WORKFLOWS.get("qwen-image-edit", {})
@@ -581,7 +586,11 @@ async def handle_photo(update, context):
         wf_key = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
         wf_config = COMFY_WORKFLOWS.get(wf_key, {})
         if not wf_config.get("is_img2img"):
-            return  # 文生图 workflow 不处理图片
+            await message.reply_text(
+                "当前工作流是文生图模式，不支持图片处理。\n"
+                "请发送 /start 选择图生图工作流（如「动漫转写实」或「图片编辑」）。"
+            )
+            return
 
     # ── 多图工作流交互（额度检查之前分流）──
     if wf_config.get("load_image_nodes") and not auto_edit:

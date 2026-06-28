@@ -11,6 +11,7 @@ from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 
 from config import HIRES_FIX_PARAMS, COMFY_WORKFLOWS, LOG_FULL_PROMPT, DEFAULT_PROMPT_PREFIX
 from config import COMFY_VIDEO_ASPECTS, COMFY_VIDEO_RESOLUTIONS, COMFY_VIDEO_FRAMES_PRESETS
+from config import COMFY_LORA_VARIANTS
 from handlers.settings import _generation_menu
 from services import sd_api, comfy_api, credits
 from services.network import is_network_error, retry_on_network_error
@@ -236,7 +237,7 @@ class GenerationQueue:
             raw_data = image_data
         else:
             info = _build_comfy_info(task, settings, translated, actual_seed, elapsed)
-            reply_markup = _comfy_generation_menu(context_id)
+            reply_markup = _comfy_generation_menu(context_id, settings=settings)
             raw_data = comfy_output.data
 
         # 非管理员显示剩余额度
@@ -444,7 +445,32 @@ def _build_comfy_info(task, settings: dict, translated: str, seed: int, elapsed:
     return "\n".join(info_parts)
 
 
-def _comfy_generation_menu(context_id: str) -> InlineKeyboardMarkup:
+def _comfy_generation_menu(context_id: str, settings: dict | None = None) -> InlineKeyboardMarkup:
+    # zit-pussy 等有 lora_node 的 workflow：显示 LoRA 变体按钮替代 Seed
+    if settings:
+        wf_key = settings.get("comfy_workflow", "")
+        wf_config = COMFY_WORKFLOWS.get(wf_key, {})
+        if wf_config.get("lora_node"):
+            current = settings.get("comfy_lora_variant", "normal")
+            lora_buttons = []
+            for key, variant in COMFY_LORA_VARIANTS.items():
+                prefix = "✓ " if key == current else ""
+                lora_buttons.append(InlineKeyboardButton(
+                    f"{prefix}{variant['label']}",
+                    callback_data=f"comfy_lora_var:{key}"
+                ))
+            rows = [lora_buttons]
+            # Upscale 开关
+            if wf_config.get("upscale_switch_node"):
+                upscale_on = settings.get("comfy_upscale_enabled", True)
+                upscale_label = "SD Upscale · ON" if upscale_on else "SD Upscale · OFF"
+                rows.append([InlineKeyboardButton(upscale_label, callback_data="comfy_upscale_toggle_gen")])
+            rows.append([
+                InlineKeyboardButton("⚙️ ComfyUI 设置", callback_data="comfy_settings"),
+                InlineKeyboardButton("关闭菜单", callback_data="close_menu"),
+            ])
+            return InlineKeyboardMarkup(rows)
+    # 默认菜单（无 lora_node 的 workflow）
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("🔁 复用本次 Seed", callback_data=f"comfy_reuse_seed_{context_id}"),

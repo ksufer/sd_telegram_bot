@@ -9,3 +9,5 @@ logs/
 .dockerignore
 docs-python-telegram-bot/
 *.md
+# 防止 rsync 误放的文件冲突 Python 标准库
+/queue.py

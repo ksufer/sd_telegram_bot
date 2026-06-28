@@ -7,7 +7,7 @@ from telegram.ext import CallbackQueryHandler
 
 from config import COMFY_SIZE_PRESETS, COMFY_WORKFLOWS, COMFY_DEFAULT_WORKFLOW
 from config import COMFY_VIDEO_ASPECTS, COMFY_VIDEO_RESOLUTIONS, COMFY_VIDEO_FRAMES_PRESETS
-from config import compute_video_dimensions
+from config import COMFY_LORA_VARIANTS, compute_video_dimensions
 from handlers import auth_callback
 from handlers.settings import _ensure_settings, _save_settings
 from services import comfy_api
@@ -80,6 +80,20 @@ def _comfy_settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
         keyboard.insert(2, [
             InlineKeyboardButton("视频长度", callback_data="comfy_video_length"),
         ])
+
+    # LoRA 变体（仅 zit-pussy 等有 lora_node 的 workflow 显示）
+    if wf_config.get("lora_node"):
+        variant_key = settings.get("comfy_lora_variant", "normal")
+        variant = COMFY_LORA_VARIANTS.get(variant_key, COMFY_LORA_VARIANTS["normal"])
+        text += f"\nLoRA变体: {variant['label']}"
+        keyboard.insert(-2, [InlineKeyboardButton("切换 LoRA 变体", callback_data="comfy_lora_variant")])
+
+    # Upscale 开关（仅有 upscale_switch_node 的 workflow 显示）
+    if wf_config.get("upscale_switch_node"):
+        upscale_on = settings.get("comfy_upscale_enabled", True)
+        upscale_label = "SD Upscale · ON" if upscale_on else "SD Upscale · OFF"
+        text += f"\n放大: {'ON' if upscale_on else 'OFF'}"
+        keyboard.insert(-2, [InlineKeyboardButton(upscale_label, callback_data="comfy_upscale_toggle")])
 
     keyboard.insert(-1, [InlineKeyboardButton("自定义 Prompt", callback_data="comfy_prompt")])
     if comfy_prompt:
@@ -491,6 +505,131 @@ async def pick_comfy_video_length(update, context):
     await _reply_menu(query, text, markup)
 
 
+# ═══ LoRA 变体 ═══
+
+def _comfy_lora_variant_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
+    current = settings.get("comfy_lora_variant", "normal")
+    current_label = COMFY_LORA_VARIANTS.get(current, {}).get("label", "?")
+    text = f"<b>选择 LoRA 变体</b>\n当前: {current_label}"
+
+    keyboard = []
+    for key, variant in COMFY_LORA_VARIANTS.items():
+        prefix = "✓ " if key == current else ""
+        keyboard.append([InlineKeyboardButton(
+            f"{prefix}{variant['label']}", callback_data=f"comfy_lora_variant:{key}"
+        )])
+
+    keyboard.append([InlineKeyboardButton("🔙 返回主菜单", callback_data="main_menu")])
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+async def show_comfy_lora_variant_menu(update, context):
+    """显示 LoRA 变体选择菜单。"""
+    query = update.callback_query
+    await _safe_answer(query)
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    text, markup = _comfy_lora_variant_menu(settings)
+    await _reply_menu(query, text, markup)
+
+
+async def pick_comfy_lora_variant(update, context):
+    """选择 LoRA 变体。"""
+    query = update.callback_query
+    variant = query.data.split(":", 1)[1]
+    if variant not in COMFY_LORA_VARIANTS:
+        await _safe_answer(query, "无效变体", show_alert=True)
+        return
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    settings["comfy_lora_variant"] = variant
+    _save_settings(context, user_id)
+    label = COMFY_LORA_VARIANTS[variant]["label"]
+    await _safe_answer(query, f"LoRA 变体: {label}")
+    text, markup = _comfy_settings_menu(settings)
+    await _reply_menu(query, text, markup)
+
+
+async def pick_comfy_lora_variant_fast(update, context):
+    """从生成后菜单快速切换 LoRA 变体，更新键盘高亮。"""
+    query = update.callback_query
+    variant = query.data.split(":", 1)[1]
+    if variant not in COMFY_LORA_VARIANTS:
+        await _safe_answer(query, "无效变体", show_alert=True)
+        return
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    settings["comfy_lora_variant"] = variant
+    _save_settings(context, user_id)
+    label = COMFY_LORA_VARIANTS[variant]["label"]
+    await _safe_answer(query, f"LoRA 变体: {label}")
+    # 重建键盘更新高亮
+    buttons = []
+    for key, v in COMFY_LORA_VARIANTS.items():
+        p = "✓ " if key == variant else ""
+        buttons.append(InlineKeyboardButton(
+            f"{p}{v['label']}", callback_data=f"comfy_lora_var:{key}"
+        ))
+    markup = InlineKeyboardMarkup([
+        buttons,
+        [
+            InlineKeyboardButton("⚙️ ComfyUI 设置", callback_data="comfy_settings"),
+            InlineKeyboardButton("关闭菜单", callback_data="close_menu"),
+        ],
+    ])
+    try:
+        await query.message.edit_reply_markup(markup)
+    except Exception:
+        pass
+
+
+# ═══ Upscale 开关 ═══
+
+async def toggle_comfy_upscale(update, context):
+    """切换 SD Upscale 开关（设置菜单中）"""
+    query = update.callback_query
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    settings["comfy_upscale_enabled"] = not settings.get("comfy_upscale_enabled", True)
+    _save_settings(context, user_id)
+    state = "ON" if settings["comfy_upscale_enabled"] else "OFF"
+    await _safe_answer(query, f"SD Upscale · {state}")
+    text, markup = _comfy_settings_menu(settings)
+    await _reply_menu(query, text, markup)
+
+
+async def toggle_comfy_upscale_fast(update, context):
+    """切换 SD Upscale 开关（生成后菜单中，仅更新键盘）"""
+    query = update.callback_query
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    settings["comfy_upscale_enabled"] = not settings.get("comfy_upscale_enabled", True)
+    _save_settings(context, user_id)
+    state = "ON" if settings["comfy_upscale_enabled"] else "OFF"
+    await _safe_answer(query, f"SD Upscale · {state}")
+    # 重建生成后菜单键盘
+    current = settings.get("comfy_lora_variant", "normal")
+    lora_buttons = []
+    for key, variant in COMFY_LORA_VARIANTS.items():
+        p = "✓ " if key == current else ""
+        lora_buttons.append(InlineKeyboardButton(
+            f"{p}{variant['label']}", callback_data=f"comfy_lora_var:{key}"
+        ))
+    upscale_label = "SD Upscale · ON" if settings["comfy_upscale_enabled"] else "SD Upscale · OFF"
+    markup = InlineKeyboardMarkup([
+        lora_buttons,
+        [InlineKeyboardButton(upscale_label, callback_data="comfy_upscale_toggle_gen")],
+        [
+            InlineKeyboardButton("⚙️ ComfyUI 设置", callback_data="comfy_settings"),
+            InlineKeyboardButton("关闭菜单", callback_data="close_menu"),
+        ],
+    ])
+    try:
+        await query.message.edit_reply_markup(markup)
+    except Exception:
+        pass
+
+
 # ═══ Handler 注册 ═══
 
 def get_handlers() -> list:
@@ -521,4 +660,17 @@ def get_handlers() -> list:
                              pattern=r"^comfy_video_length$"),
         CallbackQueryHandler(auth_callback(pick_comfy_video_length),
                              pattern=r"^comfy_video_length:\d+$"),
+        # LoRA 变体
+        CallbackQueryHandler(auth_callback(show_comfy_lora_variant_menu),
+                             pattern=r"^comfy_lora_variant$"),
+        CallbackQueryHandler(auth_callback(pick_comfy_lora_variant),
+                             pattern=r"^comfy_lora_variant:"),
+        # LoRA 变体快速切换（生成后菜单）
+        CallbackQueryHandler(auth_callback(pick_comfy_lora_variant_fast),
+                             pattern=r"^comfy_lora_var:"),
+        # Upscale 开关
+        CallbackQueryHandler(auth_callback(toggle_comfy_upscale),
+                             pattern=r"^comfy_upscale_toggle$"),
+        CallbackQueryHandler(auth_callback(toggle_comfy_upscale_fast),
+                             pattern=r"^comfy_upscale_toggle_gen$"),
     ]

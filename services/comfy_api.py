@@ -15,6 +15,7 @@ from config import (
     COMFY_POLL_INTERVAL,
     COMFY_TIMEOUT,
     COMFY_VIDEO_FRAMES_PRESETS,
+    COMFY_LORA_VARIANTS,
     compute_video_dimensions,
 )
 
@@ -68,11 +69,16 @@ def _set_node_input(workflow: dict, node_id: str | list[str], input_key: str, va
     """向一个或多个 workflow 节点注入值。
 
     支持单节点 (str) 和多节点 (list[str])，后者将同一值注入所有节点。
+    input_key 支持点号分隔的嵌套路径，如 "lora_2.on"。
     """
     ids = node_id if isinstance(node_id, list) else [node_id]
     for nid in ids:
         try:
-            workflow[nid]["inputs"][input_key] = value
+            keys = input_key.split(".")
+            target = workflow[nid]["inputs"]
+            for k in keys[:-1]:
+                target = target[k]
+            target[keys[-1]] = value
         except KeyError as e:
             raise ComfyWorkflowError(
                 f"Workflow 节点或字段不存在: node_id={nid}, input_key={input_key}"
@@ -125,6 +131,10 @@ def _build_payload(workflow: dict, prompt: str, seed: int, settings: dict,
     if wf.get("model_selectable", True):
         _set_node_input(workflow, wf["model_node"], wf["model_key"],
                         settings.get("comfy_model", wf.get("default_model", "")))
+    # SD Upscale seed 跟随主 seed
+    if "sd_upscale_node" in wf:
+        _set_node_input(workflow, wf["sd_upscale_node"],
+                        wf.get("sd_upscale_seed_key", "seed"), seed)
     if "width_node" in wf:
         _set_node_input(workflow, wf["width_node"], wf["width_key"],
                         settings.get("comfy_width", 768))
@@ -151,6 +161,25 @@ def _build_payload(workflow: dict, prompt: str, seed: int, settings: dict,
     elif uploaded_image and "load_image_node" in wf:
         _set_node_input(workflow, wf["load_image_node"], wf["load_image_key"],
                         uploaded_image)
+    # Upscale 开关：关闭时 FaceDetailer 跳过 UltimateSDUpscale，直连 VAEDecode
+    if "upscale_switch_node" in wf:
+        upscale_on = settings.get("comfy_upscale_enabled", True)
+        _set_node_input(workflow, wf["upscale_switch_node"], wf["upscale_switch_key"],
+                        wf["upscale_switch_on"] if upscale_on else wf["upscale_switch_off"])
+
+    # LoRA 变体切换（zit-pussy 专属）
+    if "lora_node" in wf:
+        variant_key = settings.get("comfy_lora_variant", "normal")
+        variant = COMFY_LORA_VARIANTS.get(variant_key, COMFY_LORA_VARIANTS["normal"])
+        _set_node_input(workflow, wf["lora_node"], "lora_1.on", variant.get("lora_1_on", True))
+        _set_node_input(workflow, wf["lora_node"], "lora_2.on", variant["lora_2_on"])
+        _set_node_input(workflow, wf["lora_node"], "lora_3.on", variant["lora_3_on"])
+    if "detailer_prompt_node" in wf:
+        variant_key = settings.get("comfy_lora_variant", "normal")
+        variant = COMFY_LORA_VARIANTS.get(variant_key, COMFY_LORA_VARIANTS["normal"])
+        detailer_prompt = variant["detailer_prompt"] or final_prompt
+        _set_node_input(workflow, wf["detailer_prompt_node"],
+                        wf["detailer_prompt_key"], detailer_prompt)
     return workflow
 
 
@@ -259,7 +288,7 @@ async def _poll_result(client: httpx.AsyncClient, prompt_id: str,
                      wf_config: dict | None = None,
                      wf_key: str | None = None) -> ComfyOutput:
     deadline = time.monotonic() + COMFY_TIMEOUT
-    output_node_classes = {"SaveImage", "Image Saver Simple", "SaveVideo", "VHS_VideoCombine"}
+    output_node_classes = {"SaveImage", "SaveImageAdvanced", "Image Saver Simple", "SaveVideo", "VHS_VideoCombine"}
     while time.monotonic() < deadline:
         resp = await client.get(f"/history/{prompt_id}")
         resp.raise_for_status()
@@ -275,8 +304,10 @@ async def _poll_result(client: httpx.AsyncClient, prompt_id: str,
             raise ComfyApiError(f"ComfyUI 生成失败: {status}")
 
         outputs = item.get("outputs", {})
+        logger.info(f"ComfyUI outputs: {list(outputs.keys())}")
+        # 收集所有候选输出，优先返回 Save 类节点（避免取到 PreviewImage 中间结果）
+        candidates = []
         for _node_id, node_output in outputs.items():
-            # 视频工作流优先 videos/gifs，图片工作流优先 images
             if wf_config and wf_config.get("output_type") == "video":
                 file_keys = ("videos", "gifs", "images")
             else:
@@ -286,18 +317,30 @@ async def _poll_result(client: httpx.AsyncClient, prompt_id: str,
                 if files and len(files) > 0:
                     file_info = files[0]
                     filename = file_info.get("filename")
+                    logger.info(f"ComfyUI 取图候选: node={_node_id}, file_key={file_key}, filename={filename}")
                     if filename:
-                        data = await _download_image(
-                            client,
-                            filename=filename,
-                            subfolder=file_info.get("subfolder", ""),
-                            image_type=file_info.get("type", "output"),
-                        )
-                        return ComfyOutput(
-                            data=data,
-                            filename=filename,
-                            kind=_detect_output_kind(filename),
-                        )
+                        # Save 类节点优先级 0，其他节点（PreviewImage 等）优先级 1
+                        cached_wf = _workflow_cache.get(wf_key or "", {})
+                        node = cached_wf.get(_node_id, {})
+                        class_type = node.get("class_type", "") if isinstance(node, dict) else ""
+                        priority = 0 if class_type in output_node_classes else 1
+                        candidates.append((priority, _node_id, file_info, node_output, file_key))
+        if candidates:
+            candidates.sort(key=lambda x: x[0])
+            priority, _node_id, file_info, _, file_key = candidates[0]
+            filename = file_info.get("filename")
+            logger.info(f"ComfyUI 取图: node={_node_id}, file_key={file_key}, filename={filename}, priority={priority}")
+            data = await _download_image(
+                client,
+                filename=filename,
+                subfolder=file_info.get("subfolder", ""),
+                image_type=file_info.get("type", "output"),
+            )
+            return ComfyOutput(
+                data=data,
+                filename=filename,
+                kind=_detect_output_kind(filename),
+            )
 
         await asyncio.sleep(COMFY_POLL_INTERVAL)
 

@@ -40,6 +40,21 @@ WORKFLOW_REGISTRY = [
         "input_type": "text",
     },
     {
+        "key": "zit-pussy",
+        "emoji": "💦",
+        "label": "ZIT Pussy",
+        "description": "Z-Image-Turbo 文生图 + Pussy 精修 + SD 2x 放大",
+        "how_to": (
+            "直接发送描述词即可\n"
+            "例如：a girl sitting on bed, spread legs\n\n"
+            "自动进行 pussy 区域 FaceDetailer 精修\n"
+            "最终 2x SD Upscale 放大输出"
+        ),
+        "backend": "comfyui",
+        "comfy_workflow": "zit-pussy",
+        "input_type": "text",
+    },
+    {
         "key": "image-to-real",
         "emoji": "📸",
         "label": "动漫转写实",
@@ -148,6 +163,35 @@ COMFY_WORKFLOWS = {
         "height_node": "83:13",
         "height_key": "height",
         "default_model": os.getenv("COMFY_DEFAULT_MODEL", "moodyPornMix_zitV9.safetensors"),
+    },
+    "zit-pussy": {
+        "label": "ZIT Pussy（文生图+精修+放大）",
+        "path": "data/zit-up-pussy.json",
+        "is_img2img": False,
+        "prompt_node": "96",
+        "prompt_key": "text",
+        "seed_node": "97",
+        "seed_key": "seed",
+        "model_node": "95",
+        "model_key": "unet_name",
+        "model_loader_class": "UNETLoader",
+        "width_node": "91",
+        "width_key": "width",
+        "height_node": "91",
+        "height_key": "height",
+        "default_model": "divingZImageTurbo_v60Fp16.safetensors",
+        "upscale_model_node": "98",
+        "upscale_model_key": "model_name",
+        "sd_upscale_node": "88",
+        "sd_upscale_seed_key": "seed",
+        "lora_node": "102",
+        "detailer_prompt_node": "103",
+        "detailer_prompt_key": "text",
+        # Upscale 开关：关闭时跳过 UltimateSDUpscale，FaceDetailer 直连 VAEDecode
+        "upscale_switch_node": "101",
+        "upscale_switch_key": "image",
+        "upscale_switch_on": ["88", 0],
+        "upscale_switch_off": ["93", 0],
     },
     "image-to-real": {
         "label": "Image-to-Real（动漫转写实）",
@@ -346,6 +390,39 @@ def compute_video_dimensions(aspect_key: str, resolution_key: str) -> tuple[int,
 
     return width, height
 
+# ---- ComfyUI LoRA 变体（zit-pussy 专属）----
+COMFY_LORA_VARIANTS = {
+    "off": {
+        "label": "关闭",
+        "lora_1_on": False,
+        "lora_2_on": False,
+        "lora_3_on": False,
+        "detailer_prompt": "",  # 空字符串 → 使用用户输入的 prompt
+    },
+    "normal": {
+        "label": "正常",
+        "lora_1_on": True,
+        "lora_2_on": True,
+        "lora_3_on": False,
+        "detailer_prompt": (
+            "A natural close-up view of a woman's genitalia. "
+            "The outer labia are softly closed, showing natural contours and subtle skin folds. "
+            "Soft pink skin tone with smooth, realistic texture and even lighting."
+        ),
+    },
+    "spread": {
+        "label": "Spread",
+        "lora_1_on": True,
+        "lora_2_on": False,
+        "lora_3_on": True,
+        "detailer_prompt": (
+            "A girl is sitting and spreading her legs to reveal her genitalia. "
+            "Pulling the outer lips wide open to show the clitoris and inner folds. "
+            "The skin has a natural pink tone with a wet, glossy texture."
+        ),
+    },
+}
+
 # ---- ComfyUI 视频长度预设（帧数）----
 COMFY_VIDEO_FRAMES_PRESETS = {
     "81":  {"label": "~3秒 (81帧)",   "frames": 81},
@@ -406,4 +483,6 @@ DEFAULT_USER_SETTINGS = {
     "comfy_video_aspect": "9:16",
     "comfy_video_resolution": "480p",
     "comfy_video_frames": 81,
+    "comfy_lora_variant": "normal",
+    "comfy_upscale_enabled": True,
 }

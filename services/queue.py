@@ -16,6 +16,7 @@ from handlers.settings import _generation_menu
 from services import sd_api, comfy_api, credits
 from services.network import is_network_error, retry_on_network_error
 from services.translator import translate
+from services.face_prompt import extract_face_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -203,10 +204,20 @@ class GenerationQueue:
                     seed = random.randint(0, 2**63 - 1)
                 uploaded_image = settings.get("_uploaded_image")
                 uploaded_images = settings.get("_uploaded_images")
+                # Face prompt 提取（脸部重绘专用）
+                face_prompt = None
+                manual_face = settings.get("comfy_face_prompt", "")
+                if wf_config.get("face_detailer_prompt_node"):
+                    if manual_face:
+                        face_prompt = manual_face
+                    else:
+                        await updater.set_stage("正在提取脸部提示词...")
+                        face_prompt = await extract_face_prompt(task.prompt)
                 comfy_output, actual_seed = await comfy_api.generate(
                     translated, settings, seed,
                     uploaded_image=uploaded_image,
                     uploaded_images=uploaded_images,
+                    face_prompt=face_prompt,
                 )
 
         except Exception:

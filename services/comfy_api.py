@@ -16,6 +16,7 @@ from config import (
     COMFY_TIMEOUT,
     COMFY_VIDEO_FRAMES_PRESETS,
     COMFY_LORA_VARIANTS,
+    NSFW_BODY_KEYWORDS,
     compute_video_dimensions,
 )
 
@@ -105,7 +106,8 @@ def _load_workflow(wf_key: str) -> dict:
 
 def _build_payload(workflow: dict, prompt: str, seed: int, settings: dict,
                    uploaded_image: str | None = None,
-                   uploaded_images: dict[str, str] | None = None) -> dict:
+                   uploaded_images: dict[str, str] | None = None,
+                   face_prompt: str | None = None) -> dict:
     """根据 workflow 配置替换 prompt、seed、模型、分辨率等节点。"""
     wf = _get_wf_config(settings)
     # 优先用用户自定义 prompt，否则用传入的 prompt（文生图=用户输入，图生图=空→保留默认）
@@ -180,6 +182,21 @@ def _build_payload(workflow: dict, prompt: str, seed: int, settings: dict,
         detailer_prompt = variant["detailer_prompt"] or final_prompt
         _set_node_input(workflow, wf["detailer_prompt_node"],
                         wf["detailer_prompt_key"], detailer_prompt)
+    # FaceDetailer prompt（zit-pussy-face 脸部重绘）
+    if "face_detailer_prompt_node" in wf:
+        face_text = (face_prompt
+                     or settings.get("comfy_face_prompt", "")
+                     or final_prompt)
+        _set_node_input(workflow, wf["face_detailer_prompt_node"],
+                        wf["face_detailer_prompt_key"], face_text)
+    # SD Upscale 提示词：face_prompt（人物+画风）+ 原 prompt 中的 NSFW 身体关键词
+    # 排除动作词避免伪影，但保留 NSFW 词防止模型过拟合产生遮挡
+    if "sd_upscale_prompt_node" in wf:
+        base = face_prompt or settings.get("comfy_face_prompt", "") or final_prompt
+        found = [kw for kw in NSFW_BODY_KEYWORDS if kw.lower() in prompt.lower()]
+        upscale_text = f"{base}, {', '.join(found)}" if found else base
+        _set_node_input(workflow, wf["sd_upscale_prompt_node"],
+                        wf["sd_upscale_prompt_key"], upscale_text)
     return workflow
 
 
@@ -373,13 +390,15 @@ async def _download_image(
 
 async def generate(prompt: str, settings: dict, seed: int,
                    uploaded_image: str | None = None,
-                   uploaded_images: dict[str, str] | None = None) -> tuple[ComfyOutput, int]:
+                   uploaded_images: dict[str, str] | None = None,
+                   face_prompt: str | None = None) -> tuple[ComfyOutput, int]:
     wf_key = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
     wf_config = COMFY_WORKFLOWS.get(wf_key, COMFY_WORKFLOWS[COMFY_DEFAULT_WORKFLOW])
     workflow = _load_workflow(wf_key)
     payload = _build_payload(workflow, prompt, seed, settings,
                              uploaded_image=uploaded_image,
-                             uploaded_images=uploaded_images)
+                             uploaded_images=uploaded_images,
+                             face_prompt=face_prompt)
     timeout = httpx.Timeout(connect=10, read=COMFY_TIMEOUT, write=30, pool=10)
     async with httpx.AsyncClient(base_url=COMFY_API_BASE, timeout=timeout) as client:
         prompt_id = await _submit_prompt(client, payload)

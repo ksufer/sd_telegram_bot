@@ -95,6 +95,17 @@ def _comfy_settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
         text += f"\n放大: {'ON' if upscale_on else 'OFF'}"
         keyboard.insert(-2, [InlineKeyboardButton(upscale_label, callback_data="comfy_upscale_toggle")])
 
+    # 脸部提示词（仅有 face_detailer_prompt_node 的 workflow 显示）
+    if wf_config.get("face_detailer_prompt_node"):
+        face_value = settings.get("comfy_face_prompt", "")
+        if face_value:
+            text += f"\n脸部提示词: {face_value[:60]}{'...' if len(face_value) > 60 else ''}"
+        else:
+            text += "\n脸部提示词: 🤖 自动提取"
+        keyboard.insert(-2, [InlineKeyboardButton("✏️ 脸部提示词", callback_data="comfy_face_prompt_set")])
+    if settings.get("comfy_face_prompt"):
+        keyboard.insert(-2, [InlineKeyboardButton("🗑 清除脸部提示词", callback_data="comfy_face_prompt_clear")])
+
     keyboard.insert(-1, [InlineKeyboardButton("自定义 Prompt", callback_data="comfy_prompt")])
     if comfy_prompt:
         keyboard.insert(-1, [InlineKeyboardButton("🗑 清除 Prompt", callback_data="clear_comfy_prompt")])
@@ -376,6 +387,39 @@ async def clear_comfy_prompt(update, context):
     _save_settings(context, user_id)
 
     await _safe_answer(query, "已清除 Prompt")
+    text, markup = _comfy_settings_menu(settings)
+    await _reply_menu(query, text, markup)
+
+
+async def start_comfy_face_prompt_input(update, context):
+    """进入脸部提示词手动输入模式。"""
+    query = update.callback_query
+    await _safe_answer(query)
+
+    if context.user_data is None:
+        await query.edit_message_text("当前不支持脸部提示词。")
+        return
+
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    current = settings.get("comfy_face_prompt", "")
+    hint = f"当前: {current[:100]}" if current else "当前使用 🤖 自动提取"
+    context.user_data["_waiting_input"] = "comfy_face_prompt"
+    await query.edit_message_text(
+        f"请输入脸部提示词（发送 /cancel 取消）\n{hint}\n\n"
+        "脸部提示词用于 FaceDetailer 重绘，应只包含人物特征和画风。"
+    )
+
+
+async def clear_comfy_face_prompt(update, context):
+    """清除手动脸部提示词，恢复自动提取。"""
+    query = update.callback_query
+    user_id = _get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    settings["comfy_face_prompt"] = ""
+    _save_settings(context, user_id)
+
+    await _safe_answer(query, "已恢复自动提取")
     text, markup = _comfy_settings_menu(settings)
     await _reply_menu(query, text, markup)
 
@@ -673,4 +717,9 @@ def get_handlers() -> list:
                              pattern=r"^comfy_upscale_toggle$"),
         CallbackQueryHandler(auth_callback(toggle_comfy_upscale_fast),
                              pattern=r"^comfy_upscale_toggle_gen$"),
+        # 脸部提示词
+        CallbackQueryHandler(auth_callback(start_comfy_face_prompt_input),
+                             pattern=r"^comfy_face_prompt_set$"),
+        CallbackQueryHandler(auth_callback(clear_comfy_face_prompt),
+                             pattern=r"^comfy_face_prompt_clear$"),
     ]

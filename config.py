@@ -165,8 +165,8 @@ COMFY_WORKFLOWS = {
         "default_model": os.getenv("COMFY_DEFAULT_MODEL", "moodyPornMix_zitV9.safetensors"),
     },
     "zit-pussy": {
-        "label": "ZIT Pussy（文生图+精修+放大）",
-        "path": "data/zit-up-pussy.json",
+        "label": "ZIT Pussy（文生图+精修+放大+脸部修复）",
+        "path": "data/zit-up-pussy-face.json",
         "is_img2img": False,
         "prompt_node": "96",
         "prompt_key": "text",
@@ -179,7 +179,7 @@ COMFY_WORKFLOWS = {
         "width_key": "width",
         "height_node": "91",
         "height_key": "height",
-        "default_model": "divingZImageTurbo_v60Fp16.safetensors",
+        "default_model": "moodyProMix_zitV13.safetensors",
         "upscale_model_node": "98",
         "upscale_model_key": "model_name",
         "sd_upscale_node": "88",
@@ -192,6 +192,12 @@ COMFY_WORKFLOWS = {
         "upscale_switch_key": "image",
         "upscale_switch_on": ["88", 0],
         "upscale_switch_off": ["93", 0],
+        # 脸部重绘 FaceDetailer（zit 模型修复人脸）
+        "face_detailer_prompt_node": "115",
+        "face_detailer_prompt_key": "text",
+        # SD Upscale 简化提示词（避免动作/姿势产生伪影）
+        "sd_upscale_prompt_node": "120",
+        "sd_upscale_prompt_key": "text",
     },
     "image-to-real": {
         "label": "Image-to-Real（动漫转写实）",
@@ -423,6 +429,20 @@ COMFY_LORA_VARIANTS = {
     },
 }
 
+# ---- NSFW 身体关键词（SD Upscale 阶段补回，避免遮挡伪影）----
+NSFW_BODY_KEYWORDS = [
+    # 英文
+    "pussy", "clitoris", "nipples", "nipple", "breast", "breasts",
+    "vagina", "vulva", "labia", "genitalia", "genitals",
+    "nude", "naked", "topless", "bottomless",
+    "spread pussy", "open pussy", "wet pussy",
+    "areola", "clit", "penis", "testicles", "anus",
+    "butt", "ass", "cleavage", "cameltoe", "upskirt",
+    "underboob", "thighs",
+    # 中文
+    "阴部", "私处", "乳头", "乳晕", "乳房", "裸体", "裸",
+]
+
 # ---- ComfyUI 视频长度预设（帧数）----
 COMFY_VIDEO_FRAMES_PRESETS = {
     "81":  {"label": "~3秒 (81帧)",   "frames": 81},
@@ -485,4 +505,5 @@ DEFAULT_USER_SETTINGS = {
     "comfy_video_frames": 81,
     "comfy_lora_variant": "normal",
     "comfy_upscale_enabled": True,
+    "comfy_face_prompt": "",  # 空=自动提取，非空=手动覆盖
 }

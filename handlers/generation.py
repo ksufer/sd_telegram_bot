@@ -101,6 +101,9 @@ async def handle_text(update, context):
         if waiting == "comfy_prompt":
             await _handle_comfy_prompt_input(update, context)
             return
+        elif waiting == "comfy_face_prompt":
+            await _handle_comfy_face_prompt_input(update, context)
+            return
         elif waiting == "comfy_seed":
             await _handle_comfy_seed_input(update, context)
             return
@@ -390,6 +393,23 @@ async def _handle_comfy_prompt_input(update, context):
     _save_settings(context, user_id)
 
     await update.message.reply_text(f"Prompt 已设置: {text[:80]}{'...' if len(text) > 80 else ''}")
+    txt, markup = _comfy_settings_menu_shim(settings)
+    await update.message.reply_text(txt, reply_markup=markup, parse_mode="HTML")
+
+
+async def _handle_comfy_face_prompt_input(update, context):
+    text = update.message.text.strip()
+    if not text:
+        await update.message.reply_text("脸部提示词不能为空，请重新输入。发送 /cancel 取消。")
+        return
+
+    user_id = update.effective_user.id
+    settings = _ensure_settings(context, user_id)
+    settings["comfy_face_prompt"] = text
+    context.user_data["_waiting_input"] = None
+    _save_settings(context, user_id)
+
+    await update.message.reply_text(f"脸部提示词已设置: {text[:80]}{'...' if len(text) > 80 else ''}")
     txt, markup = _comfy_settings_menu_shim(settings)
     await update.message.reply_text(txt, reply_markup=markup, parse_mode="HTML")
 

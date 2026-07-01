@@ -192,6 +192,12 @@ COMFY_WORKFLOWS = {
         "upscale_switch_key": "image",
         "upscale_switch_on": ["88", 0],
         "upscale_switch_off": ["93", 0],
+        # PussyDetailer 开关：关闭时跳过 FaceDetailer(101)，FaceDetailer(111) 直连其上游
+        "pussydetailer_switch_node": "111",
+        "pussydetailer_switch_key": "image",
+        # FaceDetailer 开关：关闭时跳过 FaceDetailer(111)，Save 直连其上游
+        "facedetailer_switch_node": "108",
+        "facedetailer_switch_key": "images",
         # 脸部重绘 FaceDetailer（zit 模型修复人脸）
         "face_detailer_prompt_node": "115",
         "face_detailer_prompt_key": "text",
@@ -505,5 +511,7 @@ DEFAULT_USER_SETTINGS = {
     "comfy_video_frames": 81,
     "comfy_lora_variant": "normal",
     "comfy_upscale_enabled": True,
+    "comfy_pussydetailer_enabled": True,
+    "comfy_facedetailer_enabled": True,
     "comfy_face_prompt": "",  # 空=自动提取，非空=手动覆盖
 }

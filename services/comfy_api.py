@@ -163,11 +163,43 @@ def _build_payload(workflow: dict, prompt: str, seed: int, settings: dict,
     elif uploaded_image and "load_image_node" in wf:
         _set_node_input(workflow, wf["load_image_node"], wf["load_image_key"],
                         uploaded_image)
-    # Upscale 开关：关闭时 FaceDetailer 跳过 UltimateSDUpscale，直连 VAEDecode
+    # ─── Cascading switch logic (zit-pussy pipeline) ───
+    # Three independent toggles:
+    #   KSampler(97) → VAEDecode(93) → UltimateSDUpscale(88)
+    #     → PussyDetailer FaceDetailer(101)
+    #     → FaceDetailer(111)
+    #     → SaveImageAdvanced(108)
+    # Each OFF switch routes the upstream source directly to the downstream node.
+    pre_pussy_source = None  # what feeds PussyDetailer FaceDetailer(101)
+    pre_face_source = None   # what feeds FaceDetailer(111)
+
     if "upscale_switch_node" in wf:
         upscale_on = settings.get("comfy_upscale_enabled", True)
-        _set_node_input(workflow, wf["upscale_switch_node"], wf["upscale_switch_key"],
-                        wf["upscale_switch_on"] if upscale_on else wf["upscale_switch_off"])
+        pre_pussy_source = (
+            wf["upscale_switch_on"] if upscale_on else wf["upscale_switch_off"]
+        )
+        _set_node_input(workflow, wf["upscale_switch_node"],
+                        wf["upscale_switch_key"], pre_pussy_source)
+
+    if "pussydetailer_switch_node" in wf:
+        pussydetailer_on = settings.get("comfy_pussydetailer_enabled", True)
+        # ON: FaceDetailer(111) ← PussyDetailer(101). OFF: skip 101.
+        pre_face_source = (
+            [wf["upscale_switch_node"], 0] if pussydetailer_on
+            else pre_pussy_source
+        )
+        _set_node_input(workflow, wf["pussydetailer_switch_node"],
+                        wf["pussydetailer_switch_key"], pre_face_source)
+
+    if "facedetailer_switch_node" in wf:
+        facedetailer_on = settings.get("comfy_facedetailer_enabled", True)
+        # ON: Save(108) ← FaceDetailer(111). OFF: skip 111.
+        save_source = (
+            [wf["pussydetailer_switch_node"], 0] if facedetailer_on
+            else pre_face_source
+        )
+        _set_node_input(workflow, wf["facedetailer_switch_node"],
+                        wf["facedetailer_switch_key"], save_source)
 
     # LoRA 变体切换（zit-pussy 专属）
     if "lora_node" in wf:

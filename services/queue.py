@@ -471,11 +471,22 @@ def _comfy_generation_menu(context_id: str, settings: dict | None = None) -> Inl
                     callback_data=f"comfy_lora_var:{key}"
                 ))
             rows = [lora_buttons]
-            # Upscale 开关
+            # 三级开关合并为一行
+            toggle_row = []
             if wf_config.get("upscale_switch_node"):
                 upscale_on = settings.get("comfy_upscale_enabled", True)
-                upscale_label = "SD Upscale · ON" if upscale_on else "SD Upscale · OFF"
-                rows.append([InlineKeyboardButton(upscale_label, callback_data="comfy_upscale_toggle_gen")])
+                label = "🔍" if upscale_on else "🔍✖"
+                toggle_row.append(InlineKeyboardButton(label, callback_data="comfy_upscale_toggle_gen"))
+            if wf_config.get("pussydetailer_switch_node"):
+                pussydetailer_on = settings.get("comfy_pussydetailer_enabled", True)
+                label = "🅿️" if pussydetailer_on else "🅿️✖"
+                toggle_row.append(InlineKeyboardButton(label, callback_data="comfy_pussydetailer_toggle_gen"))
+            if wf_config.get("facedetailer_switch_node"):
+                facedetailer_on = settings.get("comfy_facedetailer_enabled", True)
+                label = "👤" if facedetailer_on else "👤✖"
+                toggle_row.append(InlineKeyboardButton(label, callback_data="comfy_facedetailer_toggle_gen"))
+            if toggle_row:
+                rows.append(toggle_row)
             rows.append([
                 InlineKeyboardButton("⚙️ ComfyUI 设置", callback_data="comfy_settings"),
                 InlineKeyboardButton("关闭菜单", callback_data="close_menu"),

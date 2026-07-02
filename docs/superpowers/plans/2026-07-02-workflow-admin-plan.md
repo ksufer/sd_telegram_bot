@@ -1,7 +1,5 @@
 # 工作流配置管理 Web 面板 — 实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** 将工作流配置从硬编码 `config.py` 迁移到 `data/workflows/*.json` 文件，并提供独立 Flask Web 管理面板。
 
 **Architecture:** `config.py` 启动时动态加载 `data/workflows/*.json`；管理员通过独立 Docker 容器中的 Flask 面板 CRUD 配置文件；Bot 重启后生效。
@@ -575,7 +573,15 @@ git add admin/ pyproject.toml uv.lock .env.example
 git commit -m "feat: Flask 只读管理页 — 登录 + 工作流列表"
 ```
 
-> **路径常量**: 实施时所有 `Path("data/workflows")` / `Path("data/comfy_workflows")` 统一通过 `admin/` 模块级常量引用（如 `WORKFLOW_DIR = Path(os.getenv("DATA_DIR", "data")) / "workflows"`），避免散落字面量。
+> **路径常量**: 实施时在 `admin/app.py` 顶部统一定义路径常量，避免散落字面量：
+> ```python
+> import os
+> from pathlib import Path
+> DATA_DIR = Path(os.getenv("DATA_DIR", "data"))
+> WORKFLOW_DIR = DATA_DIR / "workflows"
+> COMFY_WORKFLOW_DIR = DATA_DIR / "comfy_workflows"
+> ```
+> Docker compose 中通过 `environment: DATA_DIR=/app/data` 注入。
 
 ---
 
@@ -1331,6 +1337,35 @@ def api_validate_mapping():
         return {"error": file_error}, 400
 
     ALLOWED_COMFY_FIELDS = {
+        "label", "is_img2img", "output_type", "model_selectable",
+        "prompt_node", "prompt_key",
+        "seed_node", "seed_key",
+        "model_node", "model_key", "model_loader_class",
+        "width_node", "width_key", "height_node", "height_key",
+        "video_width_node", "video_width_key", "video_height_node",
+        "video_height_key", "video_frames_node", "video_frames_key",
+        "load_image_node", "load_image_key",
+        "upscale_switch_node", "upscale_switch_key",
+        "upscale_switch_on", "upscale_switch_off",
+        "pussydetailer_switch_node", "pussydetailer_switch_key",
+        "facedetailer_switch_node", "facedetailer_switch_key",
+        "facedetailer_switch_on", "facedetailer_switch_off",
+        "sd_upscale_node", "sd_upscale_seed_key",
+        "sd_upscale_prompt_node", "sd_upscale_prompt_key",
+        "lora_node", "lora_enable_node", "lora_enable_key",
+        "lora_strength_node", "lora_strength_key",
+        "detailer_prompt_node", "detailer_prompt_key",
+        "face_detailer_prompt_node", "face_detailer_prompt_key",
+        "facedetailer_seed_node", "facedetailer_seed_key",
+        "default_model",
+    }
+
+    comfy = {
+        k: v.strip()
+        for k, v in request.form.items()
+        if k in ALLOWED_COMFY_FIELDS and isinstance(v, str) and v.strip()
+    }
+    comfy["workflow_file"] = wf_file
 
     report = validate_nodes(comfy)
     errors = [r for r in report if r["status"] == "error"]
@@ -1521,9 +1556,13 @@ if wf_config.get("face_detailer_prompt_node") and "comfy_face_prompt" in uc:
 模型：
 
 ```python
-if model_selectable and "comfy_model" in uc:
+if model_selectable and "comfy_model" in uc and wf_config.get("model_node") and wf_config.get("model_key"):
     keyboard.append([InlineKeyboardButton("切换模型", ...)])
 ```
+
+> **重要 — 双重判断规则**: 上面每个条件都同时检查 `user_configurable` (uc) 和 `wf_config` 节点能力。不能只检查 uc。例如尺寸按钮还需确认 `width_node`/`width_key`/`height_node`/`height_key` 都存在（已在 Step 1 的 `_add_dimension_rows` 中处理）。
+
+> **执行前检查**: 运行 `grep -R "comfy_video_" -n .` 确认视频相关 settings key 的准确名称（`comfy_video_frames` 或 `comfy_video_length`），`user_configurable` 必须使用现有 key，不新造别名。
 
 - [ ] **Step 3: 验证 Bot 导入无误**
 

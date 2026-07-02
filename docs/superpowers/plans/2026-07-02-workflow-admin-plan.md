@@ -337,6 +337,18 @@ git commit -m "feat: config.py 动态加载 data/workflows/*.json，目录不存
 uv add --optional admin flask
 ```
 
+- [ ] **Step 1.5: 创建 `admin/paths.py` 统一路径常量**
+
+```python
+"""Admin 侧统一路径常量。Docker 通过 DATA_DIR 环境变量注入。"""
+import os
+from pathlib import Path
+
+DATA_DIR = Path(os.getenv("DATA_DIR", "data"))
+WORKFLOW_DIR = DATA_DIR / "workflows"
+COMFY_WORKFLOW_DIR = DATA_DIR / "comfy_workflows"
+```
+
 - [ ] **Step 2: 更新 `.env.example`**
 
 在 `.env.example` 末尾添加：
@@ -602,9 +614,10 @@ git commit -m "feat: Flask 只读管理页 — 登录 + 工作流列表"
 """校验工作流配置与 ComfyUI workflow JSON 的匹配性。"""
 
 import json
+import re
 from pathlib import Path
 
-COMFY_DIR = Path("data/comfy_workflows")
+from admin.paths import COMFY_WORKFLOW_DIR
 
 NODE_FIELDS = [
     "prompt_node", "seed_node", "model_node",
@@ -622,10 +635,12 @@ NODE_FIELDS = [
 
 def validate_workflow_file(name: str) -> str | None:
     """校验 workflow_file 不包含路径穿越。返回错误消息或 None。"""
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+\.json", name):
+        return "workflow_file 只能包含字母、数字、点、短横线、下划线，并以 .json 结尾"
     p = Path(name)
     if p.name != name or ".." in p.parts:
         return "workflow_file 只能填写文件名，不允许路径"
-    path = COMFY_DIR / name
+    path = COMFY_WORKFLOW_DIR / name
     if not path.exists():
         return f"文件不存在: {name}"
     try:
@@ -646,7 +661,11 @@ def validate_nodes(comfy_cfg: dict) -> list[dict]:
     if not name:
         return [{"field": "workflow_file", "status": "error", "msg": "未设置"}]
 
-    path = COMFY_DIR / name
+    err = validate_workflow_file(name)
+    if err:
+        return [{"field": "workflow_file", "status": "error", "msg": err}]
+
+    path = COMFY_WORKFLOW_DIR / name
     try:
         with open(path, encoding="utf-8") as f:
             wf_json = json.load(f)
@@ -683,7 +702,7 @@ def _check_nodes(comfy_cfg: dict, wf_json: dict, report: list = None) -> list:
         "facedetailer_seed_node": "facedetailer_seed_key",
     }
 
-    checked_nodes = set()
+    checked = set()
 
     for node_field in NODE_FIELDS:
         value = comfy_cfg.get(node_field)
@@ -698,9 +717,10 @@ def _check_nodes(comfy_cfg: dict, wf_json: dict, report: list = None) -> list:
             if not nid:
                 continue
             nid = str(nid)
-            if nid in checked_nodes:
+            check_id = (node_field, str(nid) if nid else "", key_field or "", str(key_value) if key_value else "")
+            if check_id in checked:
                 continue
-            checked_nodes.add(nid)
+            checked.add(check_id)
 
             node = wf_json.get(nid)
             if node is None:
@@ -1365,6 +1385,17 @@ def api_validate_mapping():
         for k, v in request.form.items()
         if k in ALLOWED_COMFY_FIELDS and isinstance(v, str) and v.strip()
     }
+
+    # 复杂字段：JSON 字符串 → 解析为 list/dict
+    JSON_FIELDS = {"load_image_nodes", "upscale_switch_on", "upscale_switch_off",
+                   "facedetailer_switch_on", "facedetailer_switch_off"}
+    for k, v in list(comfy.items()):
+        if k in JSON_FIELDS and isinstance(v, str) and v.strip():
+            try:
+                comfy[k] = json.loads(v)
+            except json.JSONDecodeError:
+                pass  # 保留原字符串，校验时会报错
+
     comfy["workflow_file"] = wf_file
 
     report = validate_nodes(comfy)
@@ -1563,6 +1594,33 @@ if model_selectable and "comfy_model" in uc and wf_config.get("model_node") and 
 > **重要 — 双重判断规则**: 上面每个条件都同时检查 `user_configurable` (uc) 和 `wf_config` 节点能力。不能只检查 uc。例如尺寸按钮还需确认 `width_node`/`width_key`/`height_node`/`height_key` 都存在（已在 Step 1 的 `_add_dimension_rows` 中处理）。
 
 > **执行前检查**: 运行 `grep -R "comfy_video_" -n .` 确认视频相关 settings key 的准确名称（`comfy_video_frames` 或 `comfy_video_length`），`user_configurable` 必须使用现有 key，不新造别名。
+
+**辅助函数建议**（在 `comfy_settings.py` 中新增模块级函数，避免条件散落）：
+
+```python
+def _can_config_size(wf_config, uc):
+    return (
+        {"comfy_width", "comfy_height"}.issubset(uc)
+        and wf_config.get("width_node") and wf_config.get("width_key")
+        and wf_config.get("height_node") and wf_config.get("height_key")
+    )
+
+def _can_config_model(wf_config, uc):
+    return (
+        "comfy_model" in uc
+        and wf_config.get("model_selectable", True)
+        and wf_config.get("model_node") and wf_config.get("model_key")
+    )
+
+def _can_config_face_prompt(wf_config, uc):
+    return (
+        "comfy_face_prompt" in uc
+        and wf_config.get("face_detailer_prompt_node")
+    )
+
+def _can_config_lora(wf_config, uc):
+    return "comfy_lora_variant" in uc and wf_config.get("lora_node")
+```
 
 - [ ] **Step 3: 验证 Bot 导入无误**
 

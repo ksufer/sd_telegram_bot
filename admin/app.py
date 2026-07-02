@@ -1,12 +1,17 @@
 """Flask Web 管理面板 — 工作流配置管理。"""
 
 import json
+import logging
 import os
 import sys
 from functools import wraps
 from pathlib import Path
 
+from urllib.parse import urlparse
+
 from flask import Flask, redirect, render_template, request, session, url_for
+
+logger = logging.getLogger(__name__)
 
 from admin.paths import WORKFLOW_DIR
 
@@ -62,6 +67,9 @@ def login_page():
         if request.form.get("password") == PASSWORD:
             session["logged_in"] = True
             next_url = request.args.get("next", url_for("list_workflows"))
+            parsed = urlparse(next_url)
+            if parsed.netloc or parsed.scheme not in ("", "http", "https"):
+                next_url = url_for("list_workflows")
             return redirect(next_url)
         error = "密码错误"
     return render_template("login.html", error=error)
@@ -93,9 +101,9 @@ def _load_all_workflows() -> list[dict]:
             data["_filename"] = f.name
             result.append(data)
         except Exception:
-            pass
+            logger.warning("Failed to load %s", f.name, exc_info=True)
     return result
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=8080, debug=False)
+    app.run(host="0.0.0.0", port=8080, debug=False)

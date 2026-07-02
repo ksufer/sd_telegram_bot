@@ -1,7 +1,13 @@
+import json
+import logging
 import os
+from pathlib import Path
+
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 # ---- 日志 ----
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
@@ -24,7 +30,7 @@ COMFY_TIMEOUT = 1500
 COMFY_DEFAULT_WORKFLOW = "z-image-turbo"
 
 # ---- 工作流注册表（主菜单驱动） ----
-WORKFLOW_REGISTRY = [
+_DEFAULT_WORKFLOW_REGISTRY = [
     {
         "key": "z-image-turbo",
         "emoji": "🖼",
@@ -160,7 +166,7 @@ WORKFLOW_REGISTRY = [
     },
 ]
 
-COMFY_WORKFLOWS = {
+_DEFAULT_COMFY_WORKFLOWS = {
     "z-image-turbo": {
         "label": "Z-Image-Turbo（文生图）",
         "path": os.getenv("COMFY_WORKFLOW_PATH", "data/zit-api.json"),
@@ -376,8 +382,8 @@ COMFY_WORKFLOWS = {
 }
 
 # 兼容旧代码（从默认 workflow 取值）
-_COMFY_DEFAULT_WF = COMFY_WORKFLOWS[COMFY_DEFAULT_WORKFLOW]
-COMFY_WORKFLOW_PATH = _COMFY_DEFAULT_WF["path"]
+_COMFY_DEFAULT_WF = _DEFAULT_COMFY_WORKFLOWS[COMFY_DEFAULT_WORKFLOW]
+COMFY_WORKFLOW_PATH = _COMFY_DEFAULT_WF.get("workflow_file", _COMFY_DEFAULT_WF.get("path", ""))
 COMFY_MODEL_LOADER_CLASS = _COMFY_DEFAULT_WF["model_loader_class"]
 COMFY_DEFAULT_MODEL = _COMFY_DEFAULT_WF["default_model"]
 
@@ -527,6 +533,75 @@ ADMIN_USER_ID: int | None = 7562421953
 
 # ---- 额度系统 ----
 DEFAULT_CREDIT_QUOTA = 100
+
+# ---- 动态加载工作流配置 ----
+def _load_workflows():
+    """从 data/workflows/ 加载所有配置。
+
+    策略：
+    - 目录不存在 → 回退硬编码默认配置
+    - 目录存在但无 .json → 返回空（进入 JSON 配置模式）
+    - 目录有 JSON 但全部无效/禁用 → 返回空 + warning
+    - 目录有 JSON 且有效 → 加载
+    """
+    wf_dir = Path("data/workflows")
+    if not wf_dir.exists():
+        return _DEFAULT_WORKFLOW_REGISTRY, _DEFAULT_COMFY_WORKFLOWS
+
+    files = sorted(wf_dir.glob("*.json"))
+    if not files:
+        # 目录存在但为空 → 说明已进入 JSON 配置模式，返回空列表（不回退默认值）
+        logger.warning("data/workflows/ 目录存在但没有任何 JSON 配置文件")
+        return [], {}
+
+    registry = []
+    comfy_workflows = {}
+    had_any_file = False
+
+    for f in files:
+        had_any_file = True
+        try:
+            with open(f, encoding="utf-8") as fp:
+                data = json.load(fp)
+
+            if data.get("schema_version") != 1:
+                logger.warning("跳过不支持的配置版本: %s", f.name)
+                continue
+
+            key = data["key"]
+            if f.stem != key:
+                logger.warning("跳过 key 与文件名不一致的配置: %s", f.name)
+                continue
+
+            if not data.get("enabled", True):
+                continue
+
+            menu = data.get("menu", {})
+            registry.append({
+                "key": key,
+                **menu,
+            })
+
+            if data.get("comfy"):
+                comfy = {
+                    **data["comfy"],
+                    "user_configurable": data.get("user_configurable", []),
+                }
+                comfy_workflows[key] = comfy
+
+        except Exception:
+            logger.warning("跳过无效配置: %s", f.name, exc_info=True)
+            continue
+
+    # 策略：目录有文件但全部无效/禁用 → warning + 返回空（不回退默认值）
+    # 管理员主动禁用所有工作流 = 有意为之，不应冒默认值
+    if had_any_file and not registry:
+        logger.warning("启用的工作流配置文件均无法加载，返回空列表")
+
+    return registry, comfy_workflows
+
+
+WORKFLOW_REGISTRY, COMFY_WORKFLOWS = _load_workflows()
 
 # ---- 用户设置默认值 ----
 DEFAULT_USER_SETTINGS = {

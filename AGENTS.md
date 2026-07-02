@@ -22,6 +22,19 @@ uv add <package>        # 添加依赖
 - 多步交互（种子输入、Prompt 输入、首尾帧收集）通过 `context.user_data["_waiting_*"]` 标记实现。
 - 权限控制：`handlers/__init__.py` 提供 `is_authorized()`、`auth_callback` 装饰器、`_user_auth_filter()`。管理员无需在白名单中。
 
+### 新增模块
+
+| 模块 | 职责 |
+|------|------|
+| `handlers/common.py` | 共享工具函数（`safe_answer`、`reply_menu`、`get_user_id`） |
+| `ui/keyboards.py` | 无副作用键盘构建模块，纯函数返回 `InlineKeyboardMarkup` |
+
+### 生成流程
+
+- `handlers/generation.py` 中 `handle_text()` / `handle_photo()` 通过 5 个辅助函数（`_check_and_charge_credit`、`_create_status_message`、`_download_tg_photo`、`_upload_to_comfy`、`_enqueue_and_notify`）消除重复代码，退款统一在调用方处理。
+- `services/queue.py` 中 `_process_task()` 已拆分为 `_translate_prompt`、`_generate`、`_send_result`、`_cache_gen_context` 私有方法。
+- `services/comfy_api.py` 中 `_build_payload()` 已拆分为 8 个 `_apply_*` 函数。
+
 ## 外部服务
 
 | 服务 | 地址 | 超时 |
@@ -35,11 +48,13 @@ uv add <package>        # 添加依赖
 
 ## Docker 启动
 
-多平台 Compose 覆盖文件，启动方式：
+多平台 Compose 覆盖文件：
 
 ```bash
-./start.sh          # Linux（network_mode: host，代理指向 10.126.126.1:10808）
-start.bat           # Windows 双击（桥接网络，代理指向 host.docker.internal:10808）
+./start.sh          # 启动/重建容器（Linux）
+./stop.sh           # 停止容器（Linux）
+./rebuild.sh        # 停止 + 重建启动（Linux）
+start.bat           # Windows 双击（对应 .bat 版本）
 ```
 
 结构说明：

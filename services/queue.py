@@ -7,16 +7,13 @@ import time
 import uuid
 from dataclasses import dataclass
 
-from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-
 from config import HIRES_FIX_PARAMS, COMFY_WORKFLOWS, LOG_FULL_PROMPT, DEFAULT_PROMPT_PREFIX
 from config import COMFY_VIDEO_ASPECTS, COMFY_VIDEO_RESOLUTIONS, COMFY_VIDEO_FRAMES_PRESETS
-from config import COMFY_LORA_VARIANTS
-from handlers.settings import _generation_menu
 from services import sd_api, comfy_api, credits
 from services.network import is_network_error, retry_on_network_error
 from services.translator import translate
 from services.face_prompt import extract_face_prompt
+from ui.keyboards import generation_menu, comfy_generation_menu
 
 logger = logging.getLogger(__name__)
 
@@ -143,88 +140,87 @@ class GenerationQueue:
             self._worker_task = None
         logger.info("Worker 空闲退出")
 
-    async def _process_task(self, task: GenerationTask):
+    async def _translate_prompt(self, task: GenerationTask,
+                               updater: ThrottledProgressUpdater) -> str:
+        """翻译提示词（含翻译开关判断和 img2img 跳过逻辑）。"""
+        backend = task.settings.get("backend", "sd")
+        if backend == "comfyui":
+            translate_enabled = task.settings.get("comfy_translate", False)
+        else:
+            translate_enabled = task.settings.get("translate", True)
+
+        if (backend == "comfyui"
+                and task.settings.get("_uploaded_image")
+                and not task.prompt):
+            return task.prompt
+        if translate_enabled:
+            await updater.set_stage("正在翻译提示词...")
+            return await translate(task.prompt)
+        return task.prompt
+
+    async def _generate(self, task: GenerationTask, translated: str,
+                       updater: ThrottledProgressUpdater) -> tuple:
+        """执行生成（SD/ComfyUI 两条路径）。返回 (raw_data, actual_seed, wf_config)。"""
         settings = task.settings
-        start_time = time.monotonic()
-        updater = ThrottledProgressUpdater(
-            self._app, task.chat_id, task.status_message_id
-        )
+        backend = settings.get("backend", "sd")
 
-        # 1-3. 翻译 + 模型 + 生成（失败时返还额度）
-        try:
-            backend = settings.get("backend", "sd")
-
-            # 1. 翻译（SD 和 ComfyUI 各自独立开关；img2img 无文字 prompt 跳过）
-            if backend == "comfyui":
-                translate_enabled = settings.get("comfy_translate", False)
-            else:
-                translate_enabled = settings.get("translate", True)
-
-            if backend == "comfyui" and settings.get("_uploaded_image") and not task.prompt:
-                # 图生图模式且无文字 prompt，跳过翻译
-                translated = task.prompt
-            elif translate_enabled:
-                await updater.set_stage("正在翻译提示词...")
-                translated = await translate(task.prompt)
-            else:
-                translated = task.prompt
-
-            # 2. 切换模型（仅在 SD 模式下）
-            if backend == "sd" and settings["model"]:
+        if backend == "sd":
+            if settings["model"]:
                 await updater.set_stage("正在切换模型...")
                 try:
                     await sd_api.set_model(settings["model"])
                 except Exception:
                     pass
 
-            # 3. 构建 payload 并生成（带进度轮询）
-            if backend == "sd":
-                await updater.set_stage("正在生成：0%")
-                payload = _build_payload(settings, translated)
+            await updater.set_stage("正在生成：0%")
+            payload = _build_payload(settings, translated)
 
-                last_progress_task = None
+            last_progress_task = None
 
-                def on_progress(ratio: float, _eta):
-                    nonlocal last_progress_task
-                    if last_progress_task and not last_progress_task.done():
-                        last_progress_task.cancel()
-                    last_progress_task = asyncio.create_task(updater.update_progress(ratio))
-
-                image_data, actual_seed = await sd_api.txt2img(payload, progress_callback=on_progress)
-
+            def on_progress(ratio: float, _eta):
+                nonlocal last_progress_task
                 if last_progress_task and not last_progress_task.done():
                     last_progress_task.cancel()
+                last_progress_task = asyncio.create_task(
+                    updater.update_progress(ratio))
+
+            image_data, actual_seed = await sd_api.txt2img(
+                payload, progress_callback=on_progress)
+
+            if last_progress_task and not last_progress_task.done():
+                last_progress_task.cancel()
+            return image_data, actual_seed, {}
+
+        # ComfyUI 路径
+        await updater.set_stage("正在生成（ComfyUI）...")
+        wf_key = settings.get("comfy_workflow", "")
+        wf_config = COMFY_WORKFLOWS.get(wf_key, {})
+        seed = int(settings.get("comfy_seed", -1))
+        if seed == -1:
+            seed = random.randint(0, 1125899906842624)
+        uploaded_image = settings.get("_uploaded_image")
+        uploaded_images = settings.get("_uploaded_images")
+
+        face_prompt = None
+        manual_face = settings.get("comfy_face_prompt", "")
+        if wf_config.get("face_detailer_prompt_node"):
+            if manual_face:
+                face_prompt = manual_face
             else:
-                # ComfyUI 路径
-                await updater.set_stage("正在生成（ComfyUI）...")
-                wf_key = settings.get("comfy_workflow", "")
-                wf_config = COMFY_WORKFLOWS.get(wf_key, {})
-                seed = int(settings.get("comfy_seed", -1))
-                if seed == -1:
-                    seed = random.randint(0, 1125899906842624)  # ComfyUI 种子最大值 2^50
-                uploaded_image = settings.get("_uploaded_image")
-                uploaded_images = settings.get("_uploaded_images")
-                # Face prompt 提取（脸部重绘专用）
-                face_prompt = None
-                manual_face = settings.get("comfy_face_prompt", "")
-                if wf_config.get("face_detailer_prompt_node"):
-                    if manual_face:
-                        face_prompt = manual_face
-                    else:
-                        await updater.set_stage("正在提取脸部提示词...")
-                        face_prompt = await extract_face_prompt(task.prompt)
-                comfy_output, actual_seed = await comfy_api.generate(
-                    translated, settings, seed,
-                    uploaded_image=uploaded_image,
-                    uploaded_images=uploaded_images,
-                    face_prompt=face_prompt,
-                )
+                await updater.set_stage("正在提取脸部提示词...")
+                face_prompt = await extract_face_prompt(task.prompt)
 
-        except Exception:
-            if task.credit_charged:
-                await credits.refund_one(task.user_id)
-            raise
+        comfy_output, actual_seed = await comfy_api.generate(
+            translated, settings, seed,
+            uploaded_image=uploaded_image,
+            uploaded_images=uploaded_images,
+            face_prompt=face_prompt,
+        )
+        return comfy_output, actual_seed, wf_config
 
+    def _cache_gen_context(self, task: GenerationTask, translated: str,
+                           actual_seed: int) -> str:
+        """缓存生成上下文，返回 context_id。"""
         context_id = uuid.uuid4().hex[:8]
         if "_gen_context" not in self._app.bot_data:
             self._app.bot_data["_gen_context"] = {}
@@ -234,38 +230,25 @@ class GenerationQueue:
             "translated": translated,
             "seed": actual_seed,
         }
-        # 只保留最近 50 条，按 Python 3.7+ dict 插入顺序淘汰最旧
         while len(_gen) > 50:
             _gen.pop(next(iter(_gen)))
+        return context_id
 
-        # 4. 发送结果（带重试，网络失败时退款并通知用户）
-        await updater.set_stage("正在发送...")
-        elapsed = time.monotonic() - start_time
-
-        if backend == "sd":
-            info = _build_sd_info(settings, translated, actual_seed, elapsed)
-            reply_markup = _generation_menu(context_id)
-            raw_data = image_data
-        else:
-            info = _build_comfy_info(task, settings, translated, actual_seed, elapsed)
-            reply_markup = _comfy_generation_menu(context_id, settings=settings)
-            raw_data = comfy_output.data
-
-        # 非管理员显示剩余额度
-        if task.credit_charged:
-            remaining = await credits.get_remaining(task.user_id)
-            info += f"\n<b>剩余额度:</b> {remaining}"
-
-        is_video = backend == "comfyui" and wf_config.get("output_type") == "video"
+    async def _send_result(self, task: GenerationTask, raw_data,
+                           info: str, reply_markup,
+                           wf_config: dict,
+                           updater: ThrottledProgressUpdater) -> None:
+        """发送图片/视频结果（含重试、fallback、网络错误退款）。内部完整保留原发送失败退款逻辑。"""
+        is_video = wf_config.get("output_type") == "video"
 
         if is_video:
-            # 视频工作流：send_video，失败则 fallback 到 send_document
-            _filename = comfy_output.filename
+            _filename = raw_data.filename
+            data = raw_data.data
             try:
                 await retry_on_network_error(
                     lambda: self._app.bot.send_video(
                         chat_id=task.chat_id,
-                        video=io.BytesIO(raw_data),
+                        video=io.BytesIO(data),
                         filename=_filename,
                         caption=info,
                         parse_mode="HTML",
@@ -284,7 +267,7 @@ class GenerationQueue:
                     await retry_on_network_error(
                         lambda: self._app.bot.send_document(
                             chat_id=task.chat_id,
-                            document=io.BytesIO(raw_data),
+                            document=io.BytesIO(data),
                             filename=_filename,
                             caption=_fallback_info,
                             parse_mode="HTML",
@@ -328,7 +311,48 @@ class GenerationQueue:
                     return
                 raise
 
-        # 5. 删除状态消息
+    async def _process_task(self, task: GenerationTask):
+        settings = task.settings
+        backend = settings.get("backend", "sd")
+        start_time = time.monotonic()
+        updater = ThrottledProgressUpdater(
+            self._app, task.chat_id, task.status_message_id
+        )
+
+        # 翻译 + 生成（此阶段失败退款）
+        try:
+            translated = await self._translate_prompt(task, updater)
+            raw_data, actual_seed, wf_config = await self._generate(
+                task, translated, updater)
+        except Exception:
+            if task.credit_charged:
+                await credits.refund_one(task.user_id)
+            raise
+
+        # 缓存生成上下文
+        context_id = self._cache_gen_context(task, translated, actual_seed)
+
+        # 构建结果信息和菜单
+        await updater.set_stage("正在发送...")
+        elapsed = time.monotonic() - start_time
+
+        if backend == "sd":
+            info = _build_sd_info(settings, translated, actual_seed, elapsed)
+            reply_markup = generation_menu(context_id)
+        else:
+            info = _build_comfy_info(task, settings, translated, actual_seed, elapsed)
+            reply_markup = comfy_generation_menu(context_id, settings=settings)
+            if wf_config.get("output_type") != "video":
+                raw_data = raw_data.data  # 图片：提取 bytes；视频：保留 ComfyOutput 供 _send_result 取 .filename
+
+        if task.credit_charged:
+            remaining = await credits.get_remaining(task.user_id)
+            info += f"\n<b>剩余额度:</b> {remaining}"
+
+        # 发送结果（内部完全保留原发送阶段退款逻辑）
+        await self._send_result(task, raw_data, info, reply_markup, wf_config, updater)
+
+        # 清理状态消息
         if task.status_message_id is not None:
             try:
                 await self._app.bot.delete_message(
@@ -454,74 +478,3 @@ def _build_comfy_info(task, settings: dict, translated: str, seed: int, elapsed:
             info_parts.insert(0, f"<b>实际 Prompt:</b> {_truncate_for_caption(actual)}")
             info_parts.insert(0, f"<b>原始 Prompt:</b> {_truncate_for_caption(html.escape(task.prompt), 350)}")
     return "\n".join(info_parts)
-
-
-def _comfy_generation_menu(context_id: str, settings: dict | None = None) -> InlineKeyboardMarkup:
-    # zit-pussy 等有 lora_node 的 workflow：显示 LoRA 变体按钮替代 Seed
-    if settings:
-        wf_key = settings.get("comfy_workflow", "")
-        wf_config = COMFY_WORKFLOWS.get(wf_key, {})
-        if wf_config.get("lora_node"):
-            current = settings.get("comfy_lora_variant", "normal")
-            lora_buttons = []
-            for key, variant in COMFY_LORA_VARIANTS.items():
-                prefix = "✓ " if key == current else ""
-                lora_buttons.append(InlineKeyboardButton(
-                    f"{prefix}{variant['label']}",
-                    callback_data=f"comfy_lora_var:{key}"
-                ))
-            rows = [lora_buttons]
-            # 三级开关合并为一行
-            toggle_row = []
-            if wf_config.get("upscale_switch_node"):
-                upscale_on = settings.get("comfy_upscale_enabled", True)
-                label = "🔍" if upscale_on else "🔍✖"
-                toggle_row.append(InlineKeyboardButton(label, callback_data="comfy_upscale_toggle_gen"))
-            if wf_config.get("pussydetailer_switch_node"):
-                pussydetailer_on = settings.get("comfy_pussydetailer_enabled", True)
-                label = "🅿️" if pussydetailer_on else "🅿️✖"
-                toggle_row.append(InlineKeyboardButton(label, callback_data="comfy_pussydetailer_toggle_gen"))
-            if wf_config.get("facedetailer_switch_node"):
-                facedetailer_on = settings.get("comfy_facedetailer_enabled", True)
-                label = "👤" if facedetailer_on else "👤✖"
-                toggle_row.append(InlineKeyboardButton(label, callback_data="comfy_facedetailer_toggle_gen"))
-            if toggle_row:
-                rows.append(toggle_row)
-            rows.append([
-                InlineKeyboardButton("⚙️ ComfyUI 设置", callback_data="comfy_settings"),
-                InlineKeyboardButton("关闭菜单", callback_data="close_menu"),
-            ])
-            return InlineKeyboardMarkup(rows)
-        # krea2 等有 lora_enable_node 的 workflow：显示 LoRA 开关 + 脸部精修开关
-        if wf_config.get("lora_enable_node"):
-            rows = []
-            toggle_row = []
-            if wf_config.get("facedetailer_switch_node"):
-                facedetailer_on = settings.get("comfy_facedetailer_enabled", True)
-                label = "👤" if facedetailer_on else "👤✖"
-                toggle_row.append(InlineKeyboardButton(label, callback_data="comfy_facedetailer_toggle_gen"))
-            lora_on = settings.get("comfy_krea2_lora_enabled", False)
-            lora_label = "🧬" if lora_on else "🧬✖"
-            toggle_row.append(InlineKeyboardButton(lora_label, callback_data="comfy_krea2_lora_toggle_gen"))
-            if toggle_row:
-                rows.append(toggle_row)
-            rows.append([
-                InlineKeyboardButton("🔁 复用本次 Seed", callback_data=f"comfy_reuse_seed_{context_id}"),
-                InlineKeyboardButton("🎲 随机 Seed", callback_data="comfy_random_seed"),
-            ])
-            rows.append([
-                InlineKeyboardButton("⚙️ ComfyUI 设置", callback_data="comfy_settings"),
-                InlineKeyboardButton("关闭菜单", callback_data="close_menu"),
-            ])
-            return InlineKeyboardMarkup(rows)
-    # 默认菜单（无 lora_node 的 workflow）
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("🔁 复用本次 Seed", callback_data=f"comfy_reuse_seed_{context_id}"),
-            InlineKeyboardButton("🎲 随机 Seed", callback_data="comfy_random_seed"),
-        ],
-        [
-            InlineKeyboardButton("⚙️ ComfyUI 设置", callback_data="comfy_settings"),
-            InlineKeyboardButton("关闭菜单", callback_data="close_menu"),
-        ],
-    ])

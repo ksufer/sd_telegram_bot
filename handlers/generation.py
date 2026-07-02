@@ -2,6 +2,7 @@ import copy
 import io
 import logging
 import re
+from typing import Callable
 
 from telegram import MessageEntity, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import MessageHandler, CommandHandler, CallbackQueryHandler, filters
@@ -63,6 +64,82 @@ def _clear_firstlast_state(user_data: dict | None) -> None:
         return
     user_data.pop("_firstlast_start_frame", None)
     user_data.pop("_firstlast_end_frame", None)
+
+
+# ═══ 流程辅助函数（抽取重复的额度检查/上传/入队逻辑） ═══
+
+async def _check_and_charge_credit(user_id: int) -> tuple[bool, bool, str]:
+    """额度检查+扣减。返回 (ok, credit_charged, error_msg)。
+    ok=False 时 error_msg 为错误提示；ok=True 时 credit_charged 表示已扣费。"""
+    is_admin = ADMIN_USER_ID is not None and user_id == ADMIN_USER_ID
+    if is_admin:
+        return True, False, ""
+    remaining = await credits.get_remaining(user_id)
+    if remaining <= 0:
+        stats = await credits.get_stats(user_id)
+        return False, False, (
+            f"额度已用完（已用 {stats['used']}/{stats['total_quota']}），请联系管理员增加额度。"
+        )
+    if not await credits.use_one(user_id):
+        return False, False, "额度扣减失败，请稍后重试。"
+    return True, True, ""
+
+
+async def _create_status_message(message, text: str = "准备中...") -> int | None:
+    """创建状态消息，返回 message_id。失败返回 None。"""
+    try:
+        status_msg = await retry_on_network_error(
+            lambda: message.reply_text(text), max_retries=2,
+        )
+        return status_msg.message_id
+    except Exception:
+        logger.warning("创建状态消息失败")
+        return None
+
+
+async def _download_tg_photo(photo) -> io.BytesIO:
+    """下载 Telegram 图片到内存，失败抛异常。"""
+    photo_file = await photo.get_file()
+    image_bytes = io.BytesIO()
+    await photo_file.download_to_memory(image_bytes)
+    image_bytes.seek(0)
+    return image_bytes
+
+
+async def _upload_to_comfy(image_bytes: bytes,
+                           status_fn: Callable | None = None) -> str:
+    """上传图片到 ComfyUI。失败抛异常（不做退款）。"""
+    if status_fn:
+        await status_fn()
+    return await comfy_api.upload_image(image_bytes)
+
+
+async def _enqueue_and_notify(task: GenerationTask, queue, context,
+                              chat_id: int, status_id: int | None) -> int:
+    """入队 + 更新队列状态。失败抛异常（不做退款）。返回 ahead 计数。"""
+    ahead = await queue.enqueue(task)
+    if ahead == 0 and status_id is not None:
+        try:
+            await retry_on_network_error(
+                lambda: context.bot.edit_message_text(
+                    "正在准备生成...", chat_id=chat_id, message_id=status_id,
+                ),
+                max_retries=2,
+            )
+        except Exception:
+            pass
+    elif ahead > 0 and status_id is not None:
+        try:
+            await retry_on_network_error(
+                lambda: context.bot.edit_message_text(
+                    f"已加入队列，前方还有 {ahead} 个任务",
+                    chat_id=chat_id, message_id=status_id,
+                ),
+                max_retries=2,
+            )
+        except Exception:
+            pass
+    return ahead
 
 
 async def handle_text(update, context):
@@ -153,65 +230,39 @@ async def handle_text(update, context):
                 return
 
             # 额度检查
-            is_admin = ADMIN_USER_ID is not None and user_id == ADMIN_USER_ID
-            credit_charged = False
-            if not is_admin:
-                remaining = await credits.get_remaining(user_id)
-                if remaining <= 0:
-                    stats = await credits.get_stats(user_id)
-                    await message.reply_text(
-                        f"额度已用完（已用 {stats['used']}/{stats['total_quota']}），请联系管理员增加额度。"
-                    )
-                    return
-                if not await credits.use_one(user_id):
-                    await message.reply_text("额度扣减失败，请稍后重试。")
-                    return
-                credit_charged = True
-
-            # 状态消息
-            try:
-                status_msg = await retry_on_network_error(
-                    lambda: message.reply_text("正在上传图片..."),
-                    max_retries=2,
-                )
-                status_id = status_msg.message_id
-            except Exception:
-                logger.warning("创建状态消息失败")
-                status_id = None
-
-            # 下载被回复消息中的图片
-            try:
-                replied_photo = message.reply_to_message.photo[-1]
-                photo_file = await replied_photo.get_file()
-                image_bytes = io.BytesIO()
-                await photo_file.download_to_memory(image_bytes)
-                image_bytes.seek(0)
-            except Exception as e:
-                logger.error("下载回复图片失败: %s", e)
-                if credit_charged:
-                    await credits.refund_one(user_id)
-                await message.reply_text("下载图片失败，请稍后重试。")
+            ok, credit_charged, err = await _check_and_charge_credit(user_id)
+            if not ok:
+                await message.reply_text(err)
                 return
 
-            # 上传到 ComfyUI
+            status_id = await _create_status_message(message, "正在上传图片...")
+
+            # 下载+上传（退款在外层统一处理）
             try:
+                replied_photo = message.reply_to_message.photo[-1]
+                image_bytes = await _download_tg_photo(replied_photo)
                 if status_id is not None:
-                    await retry_on_network_error(
-                        lambda: context.bot.edit_message_text(
-                            "正在上传图片到 ComfyUI...",
-                            chat_id=chat.id, message_id=status_id,
-                        ),
-                        max_retries=2,
-                    )
-                uploaded_name = await comfy_api.upload_image(image_bytes.read())
+
+                    async def _status_fn():
+                        await retry_on_network_error(
+                            lambda: context.bot.edit_message_text(
+                                "正在上传图片到 ComfyUI...",
+                                chat_id=chat.id, message_id=status_id,
+                            ),
+                            max_retries=2,
+                        )
+
+                    uploaded_name = await _upload_to_comfy(image_bytes.read(), _status_fn)
+                else:
+                    uploaded_name = await _upload_to_comfy(image_bytes.read())
             except Exception as e:
-                logger.error("上传图片到 ComfyUI 失败: %s", e)
+                logger.error("上传图片失败: %s", e)
                 if credit_charged:
                     await credits.refund_one(user_id)
                 await message.reply_text(f"上传图片失败: {e}")
                 return
 
-            # 入队
+            # 构建任务（auto_edit 特殊逻辑保留在此处）
             task_settings = copy.deepcopy(settings)
             if auto_edit:
                 task_settings["backend"] = "comfyui"
@@ -233,38 +284,15 @@ async def handle_text(update, context):
                 credit_charged=credit_charged,
             )
 
-            queue = context.bot_data["queue"]
             try:
-                ahead = await queue.enqueue(task)
+                queue = context.bot_data["queue"]
+                await _enqueue_and_notify(task, queue, context, chat.id, status_id)
             except Exception:
                 logger.error("用户 %s 入队失败（多轮编辑）", user_id, exc_info=True)
                 if credit_charged:
                     await credits.refund_one(user_id)
                 await message.reply_text("任务提交失败，请稍后重试。")
                 return
-
-            # 队列状态提示
-            if ahead == 0 and status_id is not None:
-                try:
-                    await retry_on_network_error(
-                        lambda: context.bot.edit_message_text(
-                            "正在准备生成...", chat_id=chat.id, message_id=status_id,
-                        ),
-                        max_retries=2,
-                    )
-                except Exception:
-                    pass
-            elif ahead > 0 and status_id is not None:
-                try:
-                    await retry_on_network_error(
-                        lambda: context.bot.edit_message_text(
-                            f"已加入队列，前方还有 {ahead} 个任务",
-                            chat_id=chat.id, message_id=status_id,
-                        ),
-                        max_retries=2,
-                    )
-                except Exception:
-                    pass
 
             return
     except Exception:
@@ -296,33 +324,13 @@ async def handle_text(update, context):
                 await message.reply_text("当前工作流是图生图模式，请直接发送图片。")
             return
 
-    # 额度检查 + 扣减（管理员跳过）
-    is_admin = ADMIN_USER_ID is not None and user_id == ADMIN_USER_ID
-    credit_charged = False
-    if not is_admin:
-        remaining = await credits.get_remaining(user_id)
-        if remaining <= 0:
-            stats = await credits.get_stats(user_id)
-            used = stats["used"]
-            total = stats["total_quota"]
-            await message.reply_text(
-                f"额度已用完（已用 {used}/{total}），请联系管理员增加额度。"
-            )
-            return
-        if not await credits.use_one(user_id):
-            await message.reply_text("额度扣减失败，请稍后重试。")
-            return
-        credit_charged = True
+    # 额度检查 + 扣减
+    ok, credit_charged, err = await _check_and_charge_credit(user_id)
+    if not ok:
+        await message.reply_text(err)
+        return
 
-    try:
-        status_msg = await retry_on_network_error(
-            lambda: message.reply_text("准备中..."),
-            max_retries=2,
-        )
-        status_id = status_msg.message_id
-    except Exception:
-        logger.warning("创建状态消息失败，任务将继续执行")
-        status_id = None
+    status_id = await _create_status_message(message)
 
     reply_to = message.message_id if chat.type in ("group", "supergroup") else None
 
@@ -341,9 +349,9 @@ async def handle_text(update, context):
         credit_charged=credit_charged,
     )
 
-    queue = context.bot_data["queue"]
     try:
-        ahead = await queue.enqueue(task)
+        queue = context.bot_data["queue"]
+        await _enqueue_and_notify(task, queue, context, chat.id, status_id)
     except Exception:
         logger.error("用户 %s 入队失败", user_id, exc_info=True)
         if credit_charged:
@@ -354,33 +362,6 @@ async def handle_text(update, context):
     # enqueue 成功后清理 firstlast 状态（B1 修复：只在成功路径清除）
     if _firstlast_frames:
         _clear_firstlast_state(context.user_data)
-
-    if ahead == 0:
-        try:
-            if status_id is not None:
-                await retry_on_network_error(
-                    lambda: context.bot.edit_message_text(
-                        "正在准备生成...",
-                        chat_id=chat.id,
-                        message_id=status_id,
-                    ),
-                    max_retries=2,
-                )
-        except Exception:
-            pass
-    else:
-        try:
-            if status_id is not None:
-                await retry_on_network_error(
-                    lambda: context.bot.edit_message_text(
-                        f"已加入队列，前方还有 {ahead} 个任务",
-                        chat_id=chat.id,
-                        message_id=status_id,
-                    ),
-                    max_retries=2,
-                )
-        except Exception:
-            pass
 
 
 async def _handle_comfy_prompt_input(update, context):
@@ -696,57 +677,32 @@ async def handle_photo(update, context):
         _firstlast_prompt = None
 
     # 额度检查
-    is_admin = ADMIN_USER_ID is not None and user_id == ADMIN_USER_ID
-    credit_charged = False
-    if not is_admin:
-        remaining = await credits.get_remaining(user_id)
-        if remaining <= 0:
-            stats = await credits.get_stats(user_id)
-            await message.reply_text(
-                f"额度已用完（已用 {stats['used']}/{stats['total_quota']}），请联系管理员增加额度。"
-            )
-            return
-        if not await credits.use_one(user_id):
-            await message.reply_text("额度扣减失败，请稍后重试。")
-            return
-        credit_charged = True
+    ok, credit_charged, err = await _check_and_charge_credit(user_id)
+    if not ok:
+        await message.reply_text(err)
+        return
 
-    try:
-        status_msg = await retry_on_network_error(
-            lambda: message.reply_text("正在上传图片..."),
-            max_retries=2,
-        )
-        status_id = status_msg.message_id
-    except Exception:
-        logger.warning("创建状态消息失败")
-        status_id = None
+    status_id = await _create_status_message(message, "正在上传图片...")
 
-    # 下载 Telegram 图片（firstlast-video 已在分流阶段下载上传，跳过）
+    # 下载 + 上传（firstlast-video 已在分流阶段上传，跳过）
     if _firstlast_frames is None:
         try:
-            photo_file = await message.photo[-1].get_file()
-            image_bytes = io.BytesIO()
-            await photo_file.download_to_memory(image_bytes)
-            image_bytes.seek(0)
-        except Exception as e:
-            logger.error("下载图片失败: %s", e)
-            if credit_charged:
-                await credits.refund_one(user_id)
-            await message.reply_text("下载图片失败，请稍后重试。")
-            return
+            photo = message.photo[-1]
+            image_bytes = await _download_tg_photo(photo)
 
-        # 上传到 ComfyUI
-        try:
-            if status_id is not None:
+            async def _status_fn():
                 await retry_on_network_error(
                     lambda: context.bot.edit_message_text(
-                        "正在上传图片到 ComfyUI...", chat_id=chat.id, message_id=status_id,
+                        "正在上传图片到 ComfyUI...",
+                        chat_id=chat.id, message_id=status_id,
                     ),
                     max_retries=2,
                 )
-            uploaded_name = await comfy_api.upload_image(image_bytes.read())
+
+            uploaded_name = await _upload_to_comfy(image_bytes.read(),
+                                                   _status_fn if status_id is not None else None)
         except Exception as e:
-            logger.error("上传图片到 ComfyUI 失败: %s", e)
+            logger.error("上传图片失败: %s", e)
             if credit_charged:
                 await credits.refund_one(user_id)
             await message.reply_text(f"上传图片失败: {e}")
@@ -767,13 +723,12 @@ async def handle_photo(update, context):
     else:
         task_settings["_uploaded_image"] = uploaded_name
 
-    # 提取 caption 作为 prompt（仅 use_caption_as_prompt=True 的工作流）
     if _firstlast_frames:
         prompt_text = _firstlast_prompt
     elif wf_config.get("use_caption_as_prompt"):
         prompt_text = _clean_caption(message, context)
     else:
-        prompt_text = ""  # 其他 img2img 保持原行为
+        prompt_text = ""
 
     task = GenerationTask(
         user_id=user_id,
@@ -786,26 +741,15 @@ async def handle_photo(update, context):
         credit_charged=credit_charged,
     )
 
-    queue = context.bot_data["queue"]
     try:
-        ahead = await queue.enqueue(task)
+        queue = context.bot_data["queue"]
+        await _enqueue_and_notify(task, queue, context, chat.id, status_id)
     except Exception:
         logger.error("用户 %s 入队失败", user_id, exc_info=True)
         if credit_charged:
             await credits.refund_one(user_id)
         await message.reply_text("任务提交失败，请稍后重试。")
         return
-
-    if ahead == 0 and status_id is not None:
-        try:
-            await retry_on_network_error(
-                lambda: context.bot.edit_message_text(
-                    "正在准备生成...", chat_id=chat.id, message_id=status_id,
-                ),
-                max_retries=2,
-            )
-        except Exception:
-            pass
 
 
 def get_handlers() -> list:

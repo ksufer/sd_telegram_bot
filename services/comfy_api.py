@@ -104,148 +104,191 @@ def _load_workflow(wf_key: str) -> dict:
     return copy.deepcopy(_workflow_cache[wf_key])
 
 
+def _apply_prompt_and_seed(workflow: dict, wf_config: dict, full_prompt: str,
+                          seed: int) -> None:
+    """注入 prompt 和所有 seed 相关节点。"""
+    if full_prompt:
+        _set_node_input(workflow, wf_config["prompt_node"],
+                        wf_config["prompt_key"], full_prompt)
+    _set_node_input(workflow, wf_config["seed_node"], wf_config["seed_key"], seed)
+    if "sd_upscale_node" in wf_config:
+        _set_node_input(workflow, wf_config["sd_upscale_node"],
+                        wf_config.get("sd_upscale_seed_key", "seed"), seed)
+    if "facedetailer_seed_node" in wf_config:
+        _set_node_input(workflow, wf_config["facedetailer_seed_node"],
+                        wf_config["facedetailer_seed_key"], seed)
+
+
+def _apply_model(workflow: dict, wf_config: dict, settings: dict) -> None:
+    """注入模型节点。model_selectable=False 时保留 workflow 默认模型。"""
+    if wf_config.get("model_selectable", True):
+        _set_node_input(workflow, wf_config["model_node"], wf_config["model_key"],
+                        settings.get("comfy_model", wf_config.get("default_model", "")))
+
+
+def _apply_dimensions(workflow: dict, wf_config: dict, settings: dict) -> None:
+    """注入图片尺寸、视频宽高和帧数。"""
+    if "width_node" in wf_config:
+        _set_node_input(workflow, wf_config["width_node"], wf_config["width_key"],
+                        settings.get("comfy_width", 768))
+        _set_node_input(workflow, wf_config["height_node"], wf_config["height_key"],
+                        settings.get("comfy_height", 1280))
+    if "video_width_node" in wf_config:
+        aspect = settings.get("comfy_video_aspect", "9:16")
+        resolution = settings.get("comfy_video_resolution", "480p")
+        w, h = compute_video_dimensions(aspect, resolution)
+        _set_node_input(workflow, wf_config["video_width_node"],
+                        wf_config["video_width_key"], w)
+        _set_node_input(workflow, wf_config["video_height_node"],
+                        wf_config["video_height_key"], h)
+    if "video_frames_node" in wf_config:
+        frames_key = str(settings.get("comfy_video_frames", 81))
+        cfg = COMFY_VIDEO_FRAMES_PRESETS.get(frames_key,
+                                             COMFY_VIDEO_FRAMES_PRESETS["81"])
+        _set_node_input(workflow, wf_config["video_frames_node"],
+                        wf_config["video_frames_key"], cfg["frames"])
+
+
+def _apply_images(workflow: dict, wf_config: dict,
+                  uploaded_image: str | None = None,
+                  uploaded_images: dict[str, str] | None = None) -> None:
+    """注入上传图片路径至 load_image 节点（支持单图和多图角色映射）。"""
+    if uploaded_images and "load_image_nodes" in wf_config:
+        image_nodes = wf_config["load_image_nodes"]
+        for role, filename in uploaded_images.items():
+            cfg = image_nodes.get(role)
+            if cfg and filename:
+                _set_node_input(workflow, cfg["node"], cfg["key"], filename)
+    elif uploaded_image and "load_image_node" in wf_config:
+        _set_node_input(workflow, wf_config["load_image_node"],
+                        wf_config["load_image_key"], uploaded_image)
+
+
+def _apply_switches(workflow: dict, wf_config: dict, settings: dict) -> None:
+    """三级级联开关 reroute（Upscale / PussyDetailer / FaceDetailer）。
+
+    每个 OFF 开关将上游源直连到下游节点，跳过对应处理环节。
+    """
+    pre_pussy_source = None
+    pre_face_source = None
+
+    if "upscale_switch_node" in wf_config:
+        upscale_on = settings.get("comfy_upscale_enabled", True)
+        pre_pussy_source = (
+            wf_config["upscale_switch_on"] if upscale_on
+            else wf_config["upscale_switch_off"]
+        )
+        _set_node_input(workflow, wf_config["upscale_switch_node"],
+                        wf_config["upscale_switch_key"], pre_pussy_source)
+
+    if "pussydetailer_switch_node" in wf_config:
+        pussydetailer_on = settings.get("comfy_pussydetailer_enabled", True)
+        pre_face_source = (
+            [wf_config["upscale_switch_node"], 0] if pussydetailer_on
+            else pre_pussy_source
+        )
+        _set_node_input(workflow, wf_config["pussydetailer_switch_node"],
+                        wf_config["pussydetailer_switch_key"], pre_face_source)
+
+    if "facedetailer_switch_node" in wf_config:
+        facedetailer_on = settings.get("comfy_facedetailer_enabled", True)
+        if "facedetailer_switch_on" in wf_config:
+            save_source = (
+                wf_config["facedetailer_switch_on"] if facedetailer_on
+                else wf_config["facedetailer_switch_off"]
+            )
+        else:
+            save_source = (
+                [wf_config["pussydetailer_switch_node"], 0] if facedetailer_on
+                else pre_face_source
+            )
+        _set_node_input(workflow, wf_config["facedetailer_switch_node"],
+                        wf_config["facedetailer_switch_key"], save_source)
+
+
+def _apply_lora(workflow: dict, wf_config: dict, settings: dict,
+                prompt_fallback: str) -> None:
+    """注入 LoRA 相关配置（变体 + detailer 提示词 + krea2 开关/强度）。"""
+    if "lora_node" in wf_config:
+        variant_key = settings.get("comfy_lora_variant", "normal")
+        variant = COMFY_LORA_VARIANTS.get(variant_key, COMFY_LORA_VARIANTS["normal"])
+        _set_node_input(workflow, wf_config["lora_node"], "lora_1.on",
+                        variant.get("lora_1_on", True))
+        _set_node_input(workflow, wf_config["lora_node"], "lora_2.on",
+                        variant["lora_2_on"])
+        _set_node_input(workflow, wf_config["lora_node"], "lora_3.on",
+                        variant["lora_3_on"])
+    if "detailer_prompt_node" in wf_config:
+        variant_key = settings.get("comfy_lora_variant", "normal")
+        variant = COMFY_LORA_VARIANTS.get(variant_key, COMFY_LORA_VARIANTS["normal"])
+        detailer_prompt = variant["detailer_prompt"] or prompt_fallback
+        _set_node_input(workflow, wf_config["detailer_prompt_node"],
+                        wf_config["detailer_prompt_key"], detailer_prompt)
+    if "lora_enable_node" in wf_config:
+        lora_enabled = settings.get("comfy_krea2_lora_enabled", False)
+        _set_node_input(workflow, wf_config["lora_enable_node"],
+                        wf_config["lora_enable_key"], lora_enabled)
+    if "lora_strength_node" in wf_config:
+        strength = max(-15, min(10, settings.get("comfy_krea2_lora_strength", 5)))
+        _set_node_input(workflow, wf_config["lora_strength_node"],
+                        wf_config["lora_strength_key"], strength)
+
+
+def _apply_face_prompt(workflow: dict, wf_config: dict, face_prompt: str | None,
+                       settings: dict) -> None:
+    """注入脸部重绘提示词（FaceDetailer 节点）。"""
+    if "face_detailer_prompt_node" in wf_config:
+        face_text = face_prompt or settings.get("comfy_face_prompt", "")
+        if face_text:
+            _set_node_input(workflow, wf_config["face_detailer_prompt_node"],
+                            wf_config["face_detailer_prompt_key"], face_text)
+
+
+def _apply_upscale_prompts(workflow: dict, wf_config: dict,
+                           prompt_fallback: str, raw_prompt: str,
+                           settings: dict, face_prompt: str | None) -> None:
+    """注入 SD Upscale 提示词（脸部提示词 + NSFW 身体关键词）。"""
+    if "sd_upscale_prompt_node" in wf_config:
+        base = (face_prompt or settings.get("comfy_face_prompt", "")
+                or prompt_fallback)
+        found = [kw for kw in NSFW_BODY_KEYWORDS
+                 if kw.lower() in raw_prompt.lower()]
+        upscale_text = f"{base}, {', '.join(found)}" if found else base
+        _set_node_input(workflow, wf_config["sd_upscale_prompt_node"],
+                        wf_config["sd_upscale_prompt_key"], upscale_text)
+
+
 def _build_payload(workflow: dict, prompt: str, seed: int, settings: dict,
                    uploaded_image: str | None = None,
                    uploaded_images: dict[str, str] | None = None,
                    face_prompt: str | None = None) -> dict:
     """根据 workflow 配置替换 prompt、seed、模型、分辨率等节点。"""
     wf = _get_wf_config(settings)
-    # 优先用用户自定义 prompt，否则用传入的 prompt（文生图=用户输入，图生图=空→保留默认）
-    final_prompt = settings.get("comfy_prompt", "") or prompt
-    # ignore_user_prompt=True 时仅用传入的 prompt（图片 caption），
-    # 不使用用户自定义的 comfy_prompt，确保工作流默认提示词生效
+
+    # 计算完整最终提示词（含 prefix / append）
+    full_prompt = settings.get("comfy_prompt", "") or prompt
     if wf.get("ignore_user_prompt"):
-        final_prompt = prompt
-    if final_prompt:
+        full_prompt = prompt
+    if full_prompt:
         prefix = wf.get("prompt_prefix", "")
         if prefix:
-            final_prompt = prefix + final_prompt
-        # append_user_prompt=True 时用户 prompt 追加到工作流默认提示词后面
+            full_prompt = prefix + full_prompt
         if wf.get("append_user_prompt"):
             node_id = wf["prompt_node"]
             nid = node_id[0] if isinstance(node_id, list) else node_id
             default_prompt = workflow[nid]["inputs"].get(wf["prompt_key"], "")
             if default_prompt:
-                final_prompt = default_prompt + ", " + final_prompt
-        _set_node_input(workflow, wf["prompt_node"], wf["prompt_key"], final_prompt)
-    _set_node_input(workflow, wf["seed_node"], wf["seed_key"], seed)
-    # model_selectable=False 时跳过注入，保留工作流文件里的默认模型
-    if wf.get("model_selectable", True):
-        _set_node_input(workflow, wf["model_node"], wf["model_key"],
-                        settings.get("comfy_model", wf.get("default_model", "")))
-    # SD Upscale seed 跟随主 seed
-    if "sd_upscale_node" in wf:
-        _set_node_input(workflow, wf["sd_upscale_node"],
-                        wf.get("sd_upscale_seed_key", "seed"), seed)
-    if "width_node" in wf:
-        _set_node_input(workflow, wf["width_node"], wf["width_key"],
-                        settings.get("comfy_width", 768))
-        _set_node_input(workflow, wf["height_node"], wf["height_key"],
-                        settings.get("comfy_height", 1280))
-    # Video: width/height from aspect ratio + resolution
-    if "video_width_node" in wf:
-        aspect = settings.get("comfy_video_aspect", "9:16")
-        resolution = settings.get("comfy_video_resolution", "480p")
-        w, h = compute_video_dimensions(aspect, resolution)
-        _set_node_input(workflow, wf["video_width_node"], wf["video_width_key"], w)
-        _set_node_input(workflow, wf["video_height_node"], wf["video_height_key"], h)
-    # Video: frames (经白名单校验)
-    if "video_frames_node" in wf:
-        frames_key = str(settings.get("comfy_video_frames", 81))
-        cfg = COMFY_VIDEO_FRAMES_PRESETS.get(frames_key, COMFY_VIDEO_FRAMES_PRESETS["81"])
-        _set_node_input(workflow, wf["video_frames_node"], wf["video_frames_key"], cfg["frames"])
-    if uploaded_images and "load_image_nodes" in wf:
-        image_nodes = wf["load_image_nodes"]
-        for role, filename in uploaded_images.items():
-            cfg = image_nodes.get(role)
-            if cfg and filename:
-                _set_node_input(workflow, cfg["node"], cfg["key"], filename)
-    elif uploaded_image and "load_image_node" in wf:
-        _set_node_input(workflow, wf["load_image_node"], wf["load_image_key"],
-                        uploaded_image)
-    # ─── Cascading switch logic (zit-pussy pipeline) ───
-    # Three independent toggles:
-    #   KSampler(97) → VAEDecode(93) → UltimateSDUpscale(88)
-    #     → PussyDetailer FaceDetailer(101)
-    #     → FaceDetailer(111)
-    #     → SaveImageAdvanced(108)
-    # Each OFF switch routes the upstream source directly to the downstream node.
-    pre_pussy_source = None  # what feeds PussyDetailer FaceDetailer(101)
-    pre_face_source = None   # what feeds FaceDetailer(111)
+                full_prompt = default_prompt + ", " + full_prompt
 
-    if "upscale_switch_node" in wf:
-        upscale_on = settings.get("comfy_upscale_enabled", True)
-        pre_pussy_source = (
-            wf["upscale_switch_on"] if upscale_on else wf["upscale_switch_off"]
-        )
-        _set_node_input(workflow, wf["upscale_switch_node"],
-                        wf["upscale_switch_key"], pre_pussy_source)
+    _apply_prompt_and_seed(workflow, wf, full_prompt, seed)
+    _apply_model(workflow, wf, settings)
+    _apply_dimensions(workflow, wf, settings)
+    _apply_images(workflow, wf, uploaded_image, uploaded_images)
+    _apply_switches(workflow, wf, settings)
+    _apply_lora(workflow, wf, settings, full_prompt)
+    _apply_face_prompt(workflow, wf, face_prompt, settings)
+    _apply_upscale_prompts(workflow, wf, full_prompt, prompt, settings, face_prompt)
 
-    if "pussydetailer_switch_node" in wf:
-        pussydetailer_on = settings.get("comfy_pussydetailer_enabled", True)
-        # ON: FaceDetailer(111) ← PussyDetailer(101). OFF: skip 101.
-        pre_face_source = (
-            [wf["upscale_switch_node"], 0] if pussydetailer_on
-            else pre_pussy_source
-        )
-        _set_node_input(workflow, wf["pussydetailer_switch_node"],
-                        wf["pussydetailer_switch_key"], pre_face_source)
-
-    if "facedetailer_switch_node" in wf:
-        facedetailer_on = settings.get("comfy_facedetailer_enabled", True)
-        if "facedetailer_switch_on" in wf:
-            # 简单模式 (krea2)：显式 ON/OFF 源
-            save_source = (
-                wf["facedetailer_switch_on"] if facedetailer_on
-                else wf["facedetailer_switch_off"]
-            )
-        else:
-            # 级联模式 (zit-pussy)：动态计算源
-            save_source = (
-                [wf["pussydetailer_switch_node"], 0] if facedetailer_on
-                else pre_face_source
-            )
-        _set_node_input(workflow, wf["facedetailer_switch_node"],
-                        wf["facedetailer_switch_key"], save_source)
-
-    # LoRA 变体切换（zit-pussy 专属）
-    if "lora_node" in wf:
-        variant_key = settings.get("comfy_lora_variant", "normal")
-        variant = COMFY_LORA_VARIANTS.get(variant_key, COMFY_LORA_VARIANTS["normal"])
-        _set_node_input(workflow, wf["lora_node"], "lora_1.on", variant.get("lora_1_on", True))
-        _set_node_input(workflow, wf["lora_node"], "lora_2.on", variant["lora_2_on"])
-        _set_node_input(workflow, wf["lora_node"], "lora_3.on", variant["lora_3_on"])
-    if "detailer_prompt_node" in wf:
-        variant_key = settings.get("comfy_lora_variant", "normal")
-        variant = COMFY_LORA_VARIANTS.get(variant_key, COMFY_LORA_VARIANTS["normal"])
-        detailer_prompt = variant["detailer_prompt"] or final_prompt
-        _set_node_input(workflow, wf["detailer_prompt_node"],
-                        wf["detailer_prompt_key"], detailer_prompt)
-    # LoRA 开关 + 强度（krea2）
-    if "lora_enable_node" in wf:
-        lora_enabled = settings.get("comfy_krea2_lora_enabled", False)
-        _set_node_input(workflow, wf["lora_enable_node"], wf["lora_enable_key"], lora_enabled)
-    if "lora_strength_node" in wf:
-        lora_strength = max(-15, min(10, settings.get("comfy_krea2_lora_strength", 5)))
-        _set_node_input(workflow, wf["lora_strength_node"], wf["lora_strength_key"], lora_strength)
-    # FaceDetailer seed（krea2 脸部精修 seed 跟随主 seed）
-    if "facedetailer_seed_node" in wf:
-        _set_node_input(workflow, wf["facedetailer_seed_node"],
-                        wf["facedetailer_seed_key"], seed)
-    # FaceDetailer prompt（zit-pussy-face / krea2 脸部重绘）
-    if "face_detailer_prompt_node" in wf:
-        face_text = face_prompt or settings.get("comfy_face_prompt", "")
-        if face_text:
-            _set_node_input(workflow, wf["face_detailer_prompt_node"],
-                            wf["face_detailer_prompt_key"], face_text)
-    # SD Upscale 提示词：face_prompt（人物+画风）+ 原 prompt 中的 NSFW 身体关键词
-    # 排除动作词避免伪影，但保留 NSFW 词防止模型过拟合产生遮挡
-    if "sd_upscale_prompt_node" in wf:
-        base = face_prompt or settings.get("comfy_face_prompt", "") or final_prompt
-        found = [kw for kw in NSFW_BODY_KEYWORDS if kw.lower() in prompt.lower()]
-        upscale_text = f"{base}, {', '.join(found)}" if found else base
-        _set_node_input(workflow, wf["sd_upscale_prompt_node"],
-                        wf["sd_upscale_prompt_key"], upscale_text)
     return workflow
 
 

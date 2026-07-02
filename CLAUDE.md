@@ -4,7 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-SD Telegram Bot — 在 Telegram 中通过文本提示词远程调用 Stable Diffusion WebUI Forge 生成图片。单用户场景，轮询模式连接 Telegram API。
+SD Telegram Bot — 在 Telegram 中通过文本提示词远程调用 Stable Diffusion（ComfyUI / SD WebUI Forge）生成图片和视频。
+单用户场景，轮询模式连接 Telegram API。
 
 ## 常用命令
 
@@ -25,8 +26,9 @@ curl -s --connect-timeout 5 http://10.126.126.1:7860/sdapi/v1/sd-models
 
 ```
 用户 Telegram → Telegram Bot API → bot.py (轮询)
-                                      ├── DeepSeek API (中译英，可选)
-                                      └── SD WebUI Forge API (10.126.126.1:7860)
+                                       ├── DeepSeek API (中译英，可选)
+                                       ├── ComfyUI API (10.126.126.4:8188)
+                                       └── SD WebUI Forge API (10.126.126.1:7860)
 ```
 
 三个核心层：
@@ -35,17 +37,21 @@ curl -s --connect-timeout 5 http://10.126.126.1:7860/sdapi/v1/sd-models
 |------|------|------|
 | 入口 | `bot.py` | 初始化 `Application`，注册 handlers，`run_polling()` |
 | 消息路由 | `handlers/*.py` | 命令和文本消息分发，内联键盘回调 |
-| 外部服务 | `services/*.py` | SD API 和 DeepSeek 翻译的 HTTP 封装 |
+| 外部服务 | `services/*.py` | ComfyUI / SD API 和 DeepSeek 翻译的 HTTP 封装 |
+| UI 键盘 | `ui/keyboards.py` | 无副作用键盘构建，纯函数返回 `InlineKeyboardMarkup` |
+| 共享工具 | `handlers/common.py` | `safe_answer`、`reply_menu`、`get_user_id` |
 
 ### 关键设计
 
 - **SDK `python-telegram-bot`** v22.7，通过 `python-telegram-bot[job-queue,socks]` 安装以支持代理。
 - **代理**：中国网络环境需通过 `PROXY_URL`（socks5/http）连接 Telegram API，`bot.py` 中用 `HTTPXRequest(proxy=...)` 实现。
-- **设置存储**：用户参数（尺寸、模型、翻译开关等）存在 `context.user_data["settings"]` 内存字典中，Bot 重启即丢失。
-- **SD API 调用超时** 180 秒（`services/sd_api.py:33`），SD 生成大图可能较慢。
-- **翻译降级**：DeepSeek 调用失败时静默返回原文，不阻断生成流程（`services/translator.py:28`）。
-- **种子输入**：`handlers/generation.py` 通过 `context.user_data["_waiting_seed"]` 标记实现多步交互（点击「种子」→ 等待用户输入数字 → `/cancel` 取消）。
-- **Handler 注册**：`get_handlers()` 返回 handler 列表，注册顺序决定优先级（`bot.py:29-30`）。
+- **设置存储**：用户参数（尺寸、模型、翻译开关等）持久化到 `data/user_settings/{user_id}.json`，通过 `handlers/settings.py` 中的 `_ensure_settings()` / `_save_settings()` 读写。
+- **ComfyUI 生成超时** 1500 秒（`services/comfy_api.py`），SD API 超时 180 秒（`services/sd_api.py`）。
+- **翻译降级**：DeepSeek 调用失败时静默返回原文，不阻断生成流程（`services/translator.py`）。
+- **种子输入**：通过 `context.user_data["_waiting_input"]` / `_waiting_seed` 标记实现多步交互（点击 → 等待用户输入 → `/cancel` 取消）。
+- **生成队列**：`services/queue.py` 中 `GenerationQueue` 全局串行处理，新任务自动排队。`_process_task()` 已拆分为 `_translate_prompt`、`_generate`、`_send_result`、`_cache_gen_context`。
+- **Handler 注册**：`get_handlers()` 返回 handler 列表，注册顺序决定优先级（`bot.py:61-65`）。
+- **退款逻辑**：生成阶段失败在 `_process_task` 外层 try/except 退款；发送阶段网络错误在 `_send_result` 内部退款，不重复退。
 
 ### 数据流（图片生成）
 
@@ -83,7 +89,9 @@ rsync -avz \
 ### 重建并启动容器
 
 ```bash
-ssh homelab "cd /home/ksufer/homelab/stacks/sd-telegram-bot && docker compose up -d --build"
+ssh homelab "cd /home/ksufer/homelab/stacks/sd-telegram-bot && ./rebuild.sh"
+# 或直接：
+ssh homelab "cd /home/ksufer/homelab/stacks/sd-telegram-bot && docker compose down && docker compose up -d --build"
 ```
 
 ### 查看日志
@@ -95,12 +103,12 @@ ssh homelab "docker logs sd-telegram-bot --since 1m"
 ### 停止容器
 
 ```bash
-ssh homelab "cd /home/ksufer/homelab/stacks/sd-telegram-bot && docker compose down"
+ssh homelab "cd /home/ksufer/homelab/stacks/sd-telegram-bot && ./stop.sh"
 ```
 
 ### 注意事项
 
 - 服务器 `.env` 中的 `PROXY_URL` 应指向 `socks5://10.126.126.1:10808`（宿主机代理）
-- 容器内 `COPY . .` 有 layer cache，如果新文件没生效可能需要 `--no-cache` rebuild
+- 容器内 `COPY . .` 有 layer cache，如果新文件没生效可能需要 `--no-cache` rebuild（`start.sh` / `rebuild.sh` 已包含 `--build`）
 - 服务器上不要创建 `.venv/`（本地同步时要排除），容器内用 Dockerfile 独立构建
-- 代码同步后仅 `--build` 还不够，需要 `up -d --build` 才会重建容器
+- rsync 同步后建议用 `rebuild.sh`（先 down 再 up --build）而非 `start.sh`，避免 layer cache 问题

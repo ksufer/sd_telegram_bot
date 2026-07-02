@@ -3,7 +3,6 @@
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.error import BadRequest
 from telegram.ext import CallbackQueryHandler, CommandHandler
 
 from config import (
@@ -14,6 +13,7 @@ from config import (
     COMFY_VIDEO_FRAMES_PRESETS,
 )
 from handlers import auth_callback, _user_auth_filter
+from handlers.common import safe_answer, reply_menu, get_user_id
 from handlers.generation import _clear_firstlast_state
 from handlers.settings import (
     _ensure_settings,
@@ -26,23 +26,6 @@ logger = logging.getLogger(__name__)
 
 # ═══ 工具函数 ═══
 
-async def _safe_answer(query, text: str | None = None, show_alert: bool = False):
-    """安全响应回调，代理不稳定时忽略网络错误。"""
-    try:
-        await query.answer(text, show_alert=show_alert)
-    except Exception:
-        pass
-
-
-async def _reply_menu(query, text: str, markup):
-    """用内联菜单编辑消息，失败时发送新消息。"""
-    try:
-        await query.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
-    except BadRequest:
-        await _safe_answer(query)
-        await query.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
-
-
 def _find_workflow(key: str) -> dict | None:
     """在 WORKFLOW_REGISTRY 中按 key 查找工作流。"""
     for wf in WORKFLOW_REGISTRY:
@@ -51,15 +34,11 @@ def _find_workflow(key: str) -> dict | None:
     return None
 
 
-def _get_user_id(update) -> int:
-    return update.effective_user.id
-
-
 # ═══ 自动后端切换 ═══
 
 async def _switch_to_workflow(update, context, workflow_entry: dict):
     """选择工作流时自动切换后端和 ComfyUI workflow。"""
-    user_id = _get_user_id(update)
+    user_id = get_user_id(update)
     settings = _ensure_settings(context, user_id)
     comfy_key = workflow_entry["comfy_workflow"]
 
@@ -126,9 +105,9 @@ async def show_main_menu(update, context):
 async def main_menu_callback(update, context):
     """回调返回主菜单。"""
     query = update.callback_query
-    await _safe_answer(query)
+    await safe_answer(query)
     text, markup = _build_main_menu()
-    await _reply_menu(query, text, markup)
+    await reply_menu(query, text, markup)
 
 
 # ═══ 工作流说明页 ═══
@@ -186,30 +165,30 @@ def _build_workflow_detail(workflow_entry: dict, settings: dict) -> tuple[str, I
 async def show_workflow_detail(update, context):
     """显示工作流说明页。"""
     query = update.callback_query
-    await _safe_answer(query)
+    await safe_answer(query)
 
     # 从 callback data 提取 workflow key：workflow:z-image-turbo
     wf_key = query.data.split(":", 1)[1]
     workflow_entry = _find_workflow(wf_key)
     if workflow_entry is None:
-        await _safe_answer(query, "工作流不存在", show_alert=True)
+        await safe_answer(query, "工作流不存在", show_alert=True)
         return
 
-    user_id = _get_user_id(update)
+    user_id = get_user_id(update)
     settings = _ensure_settings(context, user_id)
     text, markup = _build_workflow_detail(workflow_entry, settings)
-    await _reply_menu(query, text, markup)
+    await reply_menu(query, text, markup)
 
 
 async def workflow_start(update, context):
     """「⚡ 开始使用」— 切换后端 + 引导用户。"""
     query = update.callback_query
-    await _safe_answer(query)
+    await safe_answer(query)
 
     wf_key = query.data.split(":", 1)[1]
     workflow_entry = _find_workflow(wf_key)
     if workflow_entry is None:
-        await _safe_answer(query, "工作流不存在", show_alert=True)
+        await safe_answer(query, "工作流不存在", show_alert=True)
         return
 
     await _switch_to_workflow(update, context, workflow_entry)
@@ -219,7 +198,7 @@ async def workflow_start(update, context):
     else:
         hint = "✅ 已就绪！现在发送一张图片即可开始。"
 
-    await _safe_answer(query, hint, show_alert=True)
+    await safe_answer(query, hint, show_alert=True)
 
     # 删除菜单消息，让用户直接操作
     try:
@@ -248,15 +227,15 @@ def _build_help_menu() -> tuple[str, InlineKeyboardMarkup]:
 
 async def show_help_menu(update, context):
     query = update.callback_query
-    await _safe_answer(query)
+    await safe_answer(query)
     text, markup = _build_help_menu()
-    await _reply_menu(query, text, markup)
+    await reply_menu(query, text, markup)
 
 
 async def help_guide(update, context):
     """使用指南 — 列出所有工作流概要，点击跳转详情。"""
     query = update.callback_query
-    await _safe_answer(query)
+    await safe_answer(query)
 
     text = "<b>📋 使用指南</b>\n\n选择你要了解的功能："
     keyboard = []
@@ -268,14 +247,14 @@ async def help_guide(update, context):
             ),
         ])
     keyboard.append([InlineKeyboardButton("🔙 返回", callback_data="help_menu")])
-    await _reply_menu(query, text, InlineKeyboardMarkup(keyboard))
+    await reply_menu(query, text, InlineKeyboardMarkup(keyboard))
 
 
 async def help_credit(update, context):
     query = update.callback_query
-    await _safe_answer(query)
+    await safe_answer(query)
 
-    user_id = _get_user_id(update)
+    user_id = get_user_id(update)
     remaining = await credits_service.get_remaining(user_id)
     total_quota = (await credits_service.get_stats(user_id))["total_quota"]
 
@@ -286,12 +265,12 @@ async def help_credit(update, context):
         f"每次生成消耗 1 额度，用完后联系管理员充值。"
     )
     keyboard = [[InlineKeyboardButton("🔙 返回", callback_data="help_menu")]]
-    await _reply_menu(query, text, InlineKeyboardMarkup(keyboard))
+    await reply_menu(query, text, InlineKeyboardMarkup(keyboard))
 
 
 async def help_commands(update, context):
     query = update.callback_query
-    await _safe_answer(query)
+    await safe_answer(query)
 
     text = (
         "<b>🔑 命令列表</b>\n\n"
@@ -302,12 +281,12 @@ async def help_commands(update, context):
         "/help — 打开本帮助"
     )
     keyboard = [[InlineKeyboardButton("🔙 返回", callback_data="help_menu")]]
-    await _reply_menu(query, text, InlineKeyboardMarkup(keyboard))
+    await reply_menu(query, text, InlineKeyboardMarkup(keyboard))
 
 
 async def help_tips(update, context):
     query = update.callback_query
-    await _safe_answer(query)
+    await safe_answer(query)
 
     text = (
         "<b>💡 使用技巧</b>\n\n"
@@ -317,7 +296,7 @@ async def help_tips(update, context):
         "• 图片编辑模式支持多轮修改，每次回复继续改"
     )
     keyboard = [[InlineKeyboardButton("🔙 返回", callback_data="help_menu")]]
-    await _reply_menu(query, text, InlineKeyboardMarkup(keyboard))
+    await reply_menu(query, text, InlineKeyboardMarkup(keyboard))
 
 
 # ═══ Handler 注册 ═══

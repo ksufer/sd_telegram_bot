@@ -7,6 +7,8 @@ from telegram.ext import CallbackQueryHandler
 from config import SIZE_PRESETS, DEFAULT_USER_SETTINGS
 from services import sd_api, storage
 from handlers import _user_auth_filter, auth_callback
+from handlers.common import safe_answer, reply_menu, get_user_id
+from ui.keyboards import generation_menu
 
 logger = logging.getLogger(__name__)
 
@@ -24,21 +26,6 @@ def _main_menu() -> tuple[str, InlineKeyboardMarkup]:
         [InlineKeyboardButton("关闭菜单", callback_data="close_menu")],
     ]
     return text, InlineKeyboardMarkup(keyboard)
-
-
-def _generation_menu(context_id: str) -> InlineKeyboardMarkup:
-    keyboard = [
-        [
-            InlineKeyboardButton("参数设置", callback_data="settings_menu"),
-            InlineKeyboardButton("关闭菜单", callback_data="close_menu"),
-        ],
-        [
-            InlineKeyboardButton("用本图提示词", callback_data=f"reuse_prompt_{context_id}"),
-            InlineKeyboardButton("用本图种子", callback_data=f"reuse_seed_{context_id}"),
-            InlineKeyboardButton("🎲", callback_data="random_seed"),
-        ],
-    ]
-    return InlineKeyboardMarkup(keyboard)
 
 
 def _settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
@@ -218,22 +205,6 @@ def _cfg_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
     return text, InlineKeyboardMarkup(keyboard)
 
 
-async def _reply_menu(query, text: str, markup):
-    try:
-        await query.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
-    except BadRequest:
-        await _safe_answer(query)
-        await query.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
-
-
-async def _safe_answer(query, text: str | None = None, show_alert: bool = False):
-    """安全响应回调，代理不稳定时忽略网络错误。"""
-    try:
-        await query.answer(text, show_alert=show_alert)
-    except Exception:
-        pass
-
-
 # ═══ 回调处理 ═══
 
 async def show_main_menu(update, context):
@@ -244,44 +215,40 @@ async def show_main_menu(update, context):
     await msg.reply_text(text, reply_markup=markup, parse_mode="HTML")
 
 
-def _get_user_id(update) -> int:
-    return update.effective_user.id
-
-
 async def show_settings(update, context):
     query = update.callback_query
-    await _safe_answer(query)
-    settings = _ensure_settings(context, _get_user_id(update))
+    await safe_answer(query)
+    settings = _ensure_settings(context, get_user_id(update))
     text, markup = _settings_menu(settings)
-    await _reply_menu(query, text, markup)
+    await reply_menu(query, text, markup)
 
 
 async def show_size_menu(update, context):
     query = update.callback_query
-    await _safe_answer(query)
-    settings = _ensure_settings(context, _get_user_id(update))
+    await safe_answer(query)
+    settings = _ensure_settings(context, get_user_id(update))
     text, markup = _size_menu(settings)
-    await _reply_menu(query, text, markup)
+    await reply_menu(query, text, markup)
 
 
 async def pick_size(update, context):
     query = update.callback_query
     data = query.data
     w, h = data.replace("pick_size_", "").split("x")
-    user_id = _get_user_id(update)
+    user_id = get_user_id(update)
     settings = _ensure_settings(context, user_id)
     settings["width"] = int(w)
     settings["height"] = int(h)
     _save_settings(context, user_id)
-    await _safe_answer(query, f"已切换至 {w} × {h}")
+    await safe_answer(query, f"已切换至 {w} × {h}")
     text, markup = _settings_menu(settings)
-    await _reply_menu(query, text, markup)
+    await reply_menu(query, text, markup)
 
 
 async def show_model_menu(update, context):
     query = update.callback_query
-    await _safe_answer(query,)
-    settings = _ensure_settings(context, _get_user_id(update))
+    await safe_answer(query,)
+    settings = _ensure_settings(context, get_user_id(update))
     try:
         models = await sd_api.get_models()
     except Exception:
@@ -293,52 +260,52 @@ async def show_model_menu(update, context):
         )
         return
     text, markup = _model_menu(settings, models)
-    await _reply_menu(query, text, markup)
+    await reply_menu(query, text, markup)
 
 
 async def pick_model(update, context):
     query = update.callback_query
     model_name = query.data.replace("pick_model_", "")
-    user_id = _get_user_id(update)
+    user_id = get_user_id(update)
     settings = _ensure_settings(context, user_id)
     settings["model"] = model_name
     _save_settings(context, user_id)
     try:
         await sd_api.set_model(model_name)
-        await _safe_answer(query,f"模型切换中：{model_name}")
+        await safe_answer(query,f"模型切换中：{model_name}")
     except Exception:
-        await _safe_answer(query,"模型切换失败", show_alert=True)
+        await safe_answer(query,"模型切换失败", show_alert=True)
     text, markup = _settings_menu(settings)
-    await _reply_menu(query, text, markup)
+    await reply_menu(query, text, markup)
 
 
 async def toggle_hires(update, context):
     query = update.callback_query
-    user_id = _get_user_id(update)
+    user_id = get_user_id(update)
     settings = _ensure_settings(context, user_id)
     settings["hires_fix"] = not settings["hires_fix"]
     _save_settings(context, user_id)
     state = "ON" if settings["hires_fix"] else "OFF"
-    await _safe_answer(query,f"高清修复 · {state}")
+    await safe_answer(query,f"高清修复 · {state}")
     text, markup = _settings_menu(settings)
-    await _reply_menu(query, text, markup)
+    await reply_menu(query, text, markup)
 
 
 async def toggle_translate(update, context):
     query = update.callback_query
-    user_id = _get_user_id(update)
+    user_id = get_user_id(update)
     settings = _ensure_settings(context, user_id)
     settings["translate"] = not settings["translate"]
     _save_settings(context, user_id)
     state = "ON" if settings["translate"] else "OFF"
-    await _safe_answer(query,f"中译英 · {state}")
+    await safe_answer(query,f"中译英 · {state}")
     text, markup = _settings_menu(settings)
-    await _reply_menu(query, text, markup)
+    await reply_menu(query, text, markup)
 
 
 async def start_seed_input(update, context):
     query = update.callback_query
-    await _safe_answer(query,)
+    await safe_answer(query,)
     context.user_data["_waiting_seed"] = True
     await query.edit_message_text(
         "请输入种子值（-1 为随机）：\n<code>/cancel</code> 取消",
@@ -348,7 +315,7 @@ async def start_seed_input(update, context):
 
 async def close_menu(update, context):
     query = update.callback_query
-    await _safe_answer(query,)
+    await safe_answer(query,)
     await query.delete_message()
 
 
@@ -356,109 +323,109 @@ async def close_menu(update, context):
 
 async def show_steps_menu(update, context):
     query = update.callback_query
-    await _safe_answer(query,)
-    settings = _ensure_settings(context, _get_user_id(update))
+    await safe_answer(query,)
+    settings = _ensure_settings(context, get_user_id(update))
     text, markup = _steps_menu(settings)
-    await _reply_menu(query, text, markup)
+    await reply_menu(query, text, markup)
 
 
 async def pick_steps(update, context):
     query = update.callback_query
     value = int(query.data.replace("pick_steps_", ""))
-    user_id = _get_user_id(update)
+    user_id = get_user_id(update)
     settings = _ensure_settings(context, user_id)
     settings["steps"] = value
     _save_settings(context, user_id)
-    await _safe_answer(query,f"Steps = {value}")
+    await safe_answer(query,f"Steps = {value}")
     text, markup = _settings_menu(settings)
-    await _reply_menu(query, text, markup)
+    await reply_menu(query, text, markup)
 
 
 async def show_cfg_menu(update, context):
     query = update.callback_query
-    await _safe_answer(query,)
-    settings = _ensure_settings(context, _get_user_id(update))
+    await safe_answer(query,)
+    settings = _ensure_settings(context, get_user_id(update))
     text, markup = _cfg_menu(settings)
-    await _reply_menu(query, text, markup)
+    await reply_menu(query, text, markup)
 
 
 async def pick_cfg(update, context):
     query = update.callback_query
     value = int(query.data.replace("pick_cfg_", ""))
-    user_id = _get_user_id(update)
+    user_id = get_user_id(update)
     settings = _ensure_settings(context, user_id)
     settings["cfg_scale"] = value
     _save_settings(context, user_id)
-    await _safe_answer(query,f"CFG = {value}")
+    await safe_answer(query,f"CFG = {value}")
     text, markup = _settings_menu(settings)
-    await _reply_menu(query, text, markup)
+    await reply_menu(query, text, markup)
 
 
 # ═══ 新参数回调 ═══
 
 async def show_sampler_menu(update, context):
     query = update.callback_query
-    await _safe_answer(query,)
-    settings = _ensure_settings(context, _get_user_id(update))
+    await safe_answer(query,)
+    settings = _ensure_settings(context, get_user_id(update))
     samplers = await sd_api.get_samplers()
     text, markup = _sampler_menu(settings, samplers)
-    await _reply_menu(query, text, markup)
+    await reply_menu(query, text, markup)
 
 
 async def pick_sampler(update, context):
     query = update.callback_query
     sampler_name = query.data.replace("pick_sampler_", "")
-    user_id = _get_user_id(update)
+    user_id = get_user_id(update)
     settings = _ensure_settings(context, user_id)
     settings["sampler"] = sampler_name
     _save_settings(context, user_id)
-    await _safe_answer(query,f"采样器：{sampler_name}")
+    await safe_answer(query,f"采样器：{sampler_name}")
     text, markup = _settings_menu(settings)
-    await _reply_menu(query, text, markup)
+    await reply_menu(query, text, markup)
 
 
 async def toggle_restore_faces(update, context):
     query = update.callback_query
-    user_id = _get_user_id(update)
+    user_id = get_user_id(update)
     settings = _ensure_settings(context, user_id)
     settings["restore_faces"] = not settings.get("restore_faces", False)
     _save_settings(context, user_id)
     state = "ON" if settings["restore_faces"] else "OFF"
-    await _safe_answer(query,f"面部修复 · {state}")
+    await safe_answer(query,f"面部修复 · {state}")
     text, markup = _settings_menu(settings)
-    await _reply_menu(query, text, markup)
+    await reply_menu(query, text, markup)
 
 
 async def toggle_tiling(update, context):
     query = update.callback_query
-    user_id = _get_user_id(update)
+    user_id = get_user_id(update)
     settings = _ensure_settings(context, user_id)
     settings["tiling"] = not settings.get("tiling", False)
     _save_settings(context, user_id)
     state = "ON" if settings["tiling"] else "OFF"
-    await _safe_answer(query,f"平铺模式 · {state}")
+    await safe_answer(query,f"平铺模式 · {state}")
     text, markup = _settings_menu(settings)
-    await _reply_menu(query, text, markup)
+    await reply_menu(query, text, markup)
 
 
 async def show_clip_skip_menu(update, context):
     query = update.callback_query
-    await _safe_answer(query,)
-    settings = _ensure_settings(context, _get_user_id(update))
+    await safe_answer(query,)
+    settings = _ensure_settings(context, get_user_id(update))
     text, markup = _clip_skip_menu(settings)
-    await _reply_menu(query, text, markup)
+    await reply_menu(query, text, markup)
 
 
 async def pick_clip_skip(update, context):
     query = update.callback_query
     value = int(query.data.replace("pick_clip_skip_", ""))
-    user_id = _get_user_id(update)
+    user_id = get_user_id(update)
     settings = _ensure_settings(context, user_id)
     settings["clip_skip"] = value
     _save_settings(context, user_id)
-    await _safe_answer(query,f"CLIP Skip = {value}")
+    await safe_answer(query,f"CLIP Skip = {value}")
     text, markup = _settings_menu(settings)
-    await _reply_menu(query, text, markup)
+    await reply_menu(query, text, markup)
 
 
 # ═══ 重用提示词/种子回调 ═══
@@ -470,10 +437,10 @@ async def reuse_prompt(update, context):
     if ctx:
         from config import DEFAULT_PROMPT_PREFIX
         full_prompt = f"{DEFAULT_PROMPT_PREFIX} {ctx['translated']}"
-        await _safe_answer(query,)
+        await safe_answer(query,)
         await query.message.reply_text(full_prompt)
     else:
-        await _safe_answer(query,"上下文已过期", show_alert=True)
+        await safe_answer(query,"上下文已过期", show_alert=True)
 
 
 async def reuse_seed(update, context):
@@ -481,22 +448,22 @@ async def reuse_seed(update, context):
     context_id = query.data.replace("reuse_seed_", "")
     ctx = context.bot_data.get("_gen_context", {}).get(context_id)
     if ctx:
-        user_id = _get_user_id(update)
+        user_id = get_user_id(update)
         settings = _ensure_settings(context, user_id)
         settings["seed"] = ctx["seed"]
         _save_settings(context, user_id)
-        await _safe_answer(query,f"种子已设为 {ctx['seed']}")
+        await safe_answer(query,f"种子已设为 {ctx['seed']}")
     else:
-        await _safe_answer(query,"上下文已过期", show_alert=True)
+        await safe_answer(query,"上下文已过期", show_alert=True)
 
 
 async def random_seed(update, context):
     query = update.callback_query
-    user_id = _get_user_id(update)
+    user_id = get_user_id(update)
     settings = _ensure_settings(context, user_id)
     settings["seed"] = -1
     _save_settings(context, user_id)
-    await _safe_answer(query,"种子已设为随机")
+    await safe_answer(query,"种子已设为随机")
 
 
 def _ensure_settings(context, user_id: int) -> dict:

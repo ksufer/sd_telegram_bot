@@ -17,6 +17,9 @@
 - 原子写入: 先写 `.tmp` 再 `os.replace`
 - **路径常量**: admin 侧集中 `data_dir/workflows` / `data_dir/comfy_workflows` 路径，不散落字面量
 - **video frames key**: 执行前 grep 确认现有 settings key 为 `comfy_video_frames`（非 `comfy_video_length`），`user_configurable` 只使用现有 key
+- **上线前安全**: CSRF token 校验所有 POST 表单, 上传文件限制 2MB, Flask 只绑定 127.0.0.1
+- **数据保护**: 导出脚本默认不覆盖已有 JSON (需 --force), 归档用 .trash/ 而非真删除
+- **成果提示**: 管理页面和文档均明确"保存后需重启 Bot 生效"
 
 ---
 
@@ -53,7 +56,7 @@ COMFY_DIR = Path("data/comfy_workflows")
 DATA_DIR = Path("data")
 
 
-def export(dry_run: bool = False) -> None:
+def export(dry_run: bool = False, force: bool = False) -> None:
     """导出所有工作流配置。"""
     if not dry_run:
         WORKFLOW_DIR.mkdir(parents=True, exist_ok=True)
@@ -97,6 +100,9 @@ def export(dry_run: bool = False) -> None:
             print(json.dumps(data, ensure_ascii=False, indent=2))
         else:
             out_path = WORKFLOW_DIR / f"{key}.json"
+            if out_path.exists() and not force:
+                print(f"SKIP {key}.json (已存在，使用 --force 覆盖)")
+                continue
             tmp = out_path.with_suffix(".json.tmp")
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -132,7 +138,8 @@ def _default_user_configurable(comfy: dict) -> list[str]:
 
 if __name__ == "__main__":
     dry_run = "--dry-run" in sys.argv
-    export(dry_run=dry_run)
+    force = "--force" in sys.argv
+    export(dry_run=dry_run, force=force)
 ```
 
 - [ ] **Step 3: 运行 dry-run 验证输出**
@@ -148,6 +155,7 @@ Expected: 打印 9 个工作流的完整 JSON 内容，不做任何文件写入�
 
 ```bash
 uv run python -m scripts.export_workflows --write
+uv run python -m scripts.export_workflows --write --force   # 覆盖已有文件
 ```
 
 Expected: 创建 `data/workflows/` 和 `data/comfy_workflows/` 目录，每个工作流一个 `.json` 文件。
@@ -200,14 +208,23 @@ logger = logging.getLogger(__name__)
 
 ```python
 def _load_workflows():
-    """从 data/workflows/ 加载所有配置。"""
+    """从 data/workflows/ 加载所有配置。
+
+    策略：
+    - 目录不存在 → 回退硬编码默认配置
+    - 目录存在但无 .json → 返回空（进入 JSON 配置模式）
+    - 目录有 JSON 但全部无效/禁用 → 返回空 + warning
+    - 目录有 JSON 且有效 → 加载
+    """
     wf_dir = Path("data/workflows")
     if not wf_dir.exists():
         return _DEFAULT_WORKFLOW_REGISTRY, _DEFAULT_COMFY_WORKFLOWS
 
     files = sorted(wf_dir.glob("*.json"))
     if not files:
-        return _DEFAULT_WORKFLOW_REGISTRY, _DEFAULT_COMFY_WORKFLOWS
+        # 目录存在但为空 → 说明已进入 JSON 配置模式，返回空列表（不回退默认值）
+        logger.warning("data/workflows/ 目录存在但没有任何 JSON 配置文件")
+        return [], {}
 
     registry = []
     comfy_workflows = {}
@@ -389,6 +406,7 @@ app.secret_key = SECRET
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
+    MAX_CONTENT_LENGTH=2 * 1024 * 1024,  # 上传文件最大 2MB
 )
 
 
@@ -401,7 +419,26 @@ def login_required(f):
     return decorated
 
 
+def generate_csrf_token():
+    if "_csrf_token" not in session:
+        session["_csrf_token"] = os.urandom(24).hex()
+    return session["_csrf_token"]
+
+app.jinja_env.globals["csrf_token"] = generate_csrf_token
+
+def require_csrf(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if request.method == "POST":
+            token = session.get("_csrf_token")
+            if not token or request.form.get("_csrf_token") != token:
+                return "CSRF 校验失败", 403
+        return f(*args, **kwargs)
+    return decorated
+
+
 @app.route("/login", methods=["GET", "POST"])
+@require_csrf
 def login_page():
     error = None
     if request.method == "POST":
@@ -488,6 +525,9 @@ if __name__ == "__main__":
             <a href="/new">新建工作流</a>
             <a href="/logout" style="float:right">退出</a>
         </nav>
+        <div style="background:#fff3cd; padding:8px 15px; margin-bottom:15px; border-radius:4px; font-size:13px;">
+          ⚠️ 配置保存后需要 <b>重启 Bot 容器</b> 才会生效。
+        </div>
         {% endif %}
         {% block content %}{% endblock %}
     </div>
@@ -503,6 +543,7 @@ if __name__ == "__main__":
 {% block content %}
 <h2>管理员登录</h2>
 <form method="POST" style="margin-top:20px; max-width:300px;">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
     <input type="password" name="password" placeholder="密码" required
            style="width:100%; padding:8px; margin-bottom:10px; border:1px solid #ddd; border-radius:4px;">
     {% if error %}<p style="color:red;">{{ error }}</p>{% endif %}
@@ -545,6 +586,7 @@ if __name__ == "__main__":
                 <a href="/detail/{{ wf.key }}" class="btn btn-primary">详情</a>
                 <a href="/edit/{{ wf.key }}" class="btn btn-warning">编辑</a>
                 <form method="POST" action="/disable/{{ wf.key }}" style="display:inline">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-danger" style="font-size:14px;">禁用</button>
                 </form>
             </td>
@@ -993,6 +1035,7 @@ def build_comfy_from_form(form: dict) -> dict:
 ```python
 @app.route("/new", methods=["GET", "POST"])
 @login_required
+@require_csrf
 def new_workflow():
     import re
     from admin.workflow_store import save_workflow, load_workflow, build_comfy_from_form
@@ -1057,6 +1100,7 @@ def _validate_form(form) -> str | None:
 
 @app.route("/edit/<key>", methods=["GET", "POST"])
 @login_required
+@require_csrf
 def edit_workflow(key: str):
     from admin.workflow_store import load_workflow, save_workflow, build_comfy_from_form
 
@@ -1102,6 +1146,7 @@ _ALL_UC_OPTIONS = ALL_UC_OPTIONS
 
 @app.route("/disable/<key>", methods=["POST"])
 @login_required
+@require_csrf
 def disable_handler(key: str):
     from admin.workflow_store import disable_workflow
     disable_workflow(key)
@@ -1110,6 +1155,7 @@ def disable_handler(key: str):
 
 @app.route("/enable/<key>", methods=["POST"])
 @login_required
+@require_csrf
 def enable_handler(key: str):
     from admin.workflow_store import enable_workflow
     enable_workflow(key)
@@ -1118,6 +1164,7 @@ def enable_handler(key: str):
 
 @app.route("/archive/<key>", methods=["POST"])
 @login_required
+@require_csrf
 def archive_handler(key: str):
     from admin.workflow_store import archive_workflow
     archive_workflow(key)
@@ -1135,6 +1182,7 @@ def archive_handler(key: str):
 {% if error %}<p style="color:red;">{{ error }}</p>{% endif %}
 
 <form method="POST">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
     <fieldset style="margin-bottom:20px; padding:15px; border:1px solid #ddd; border-radius:6px;">
         <legend>注册信息</legend>
         <label>Key <input name="key" value="{{ wf.key if wf else '' }}"
@@ -1241,15 +1289,18 @@ def archive_handler(key: str):
     <a href="/edit/{{ wf.key }}" class="btn btn-warning">编辑</a>
     {% if wf.enabled %}
     <form method="POST" action="/disable/{{ wf.key }}" style="display:inline">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="btn btn-danger" style="font-size:14px;">禁用</button>
     </form>
     {% else %}
     <form method="POST" action="/enable/{{ wf.key }}" style="display:inline">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="btn btn-success" style="font-size:14px;">启用</button>
     </form>
     {% endif %}
     <form method="POST" action="/archive/{{ wf.key }}" style="display:inline"
           onsubmit="return confirm('归档后将移入 .trash/ 目录，确定？');">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="btn btn-danger" style="font-size:12px; background:#999;">归档</button>
     </form>
 </td>
@@ -1484,7 +1535,7 @@ services:
   sd-bot:
     network_mode: host
   sd-admin:
-    network_mode: host
+    # sd-admin 使用基础 compose 中的端口映射 (127.0.0.1:8080:8080)，不需要 host 网络
 ```
 
 - [ ] **Step 4: 更新 `docker-compose.windows.yml` 添加 sd-admin 网络配置**

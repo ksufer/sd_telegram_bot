@@ -17,6 +17,8 @@
 - 配置变更第一版需要重启 Bot 生效 (阶段 5 前不做热加载)
 - `workflow_file` 只能是纯文件名, 不允许路径
 - 原子写入: 先写 `.tmp` 再 `os.replace`
+- **路径常量**: admin 侧集中 `data_dir/workflows` / `data_dir/comfy_workflows` 路径，不散落字面量
+- **video frames key**: 执行前 grep 确认现有 settings key 为 `comfy_video_frames`（非 `comfy_video_length`），`user_configurable` 只使用现有 key
 
 ---
 
@@ -211,8 +213,10 @@ def _load_workflows():
 
     registry = []
     comfy_workflows = {}
+    had_any_file = False
 
     for f in files:
+        had_any_file = True
         try:
             with open(f, encoding="utf-8") as fp:
                 data = json.load(fp)
@@ -245,6 +249,11 @@ def _load_workflows():
         except Exception:
             logger.warning("跳过无效配置: %s", f.name, exc_info=True)
             continue
+
+    # 策略：目录有文件但全部无效/禁用 → warning + 返回空（不回退默认值）
+    # 管理员主动禁用所有工作流 = 有意为之，不应冒默认值
+    if had_any_file and not registry:
+        logger.warning("启用的工作流配置文件均无法加载，返回空列表")
 
     return registry, comfy_workflows
 
@@ -565,6 +574,8 @@ Expected: `Exit code: 1` + 错误消息。
 git add admin/ pyproject.toml uv.lock .env.example
 git commit -m "feat: Flask 只读管理页 — 登录 + 工作流列表"
 ```
+
+> **路径常量**: 实施时所有 `Path("data/workflows")` / `Path("data/comfy_workflows")` 统一通过 `admin/` 模块级常量引用（如 `WORKFLOW_DIR = Path(os.getenv("DATA_DIR", "data")) / "workflows"`），避免散落字面量。
 
 ---
 
@@ -968,6 +979,9 @@ def new_workflow():
         elif load_workflow(key):
             error = f"工作流 '{key}' 已存在"
         else:
+            # 基础校验（menu 必填字段 + workflow_file + input_type 白名单）
+            error = _validate_form(request.form)
+        if not error:
             comfy = build_comfy_from_form(request.form)
             comfy["workflow_file"] = request.form.get("workflow_file", "").strip()
             comfy["is_img2img"] = request.form.get("is_img2img") == "true"
@@ -996,6 +1010,25 @@ def new_workflow():
                            uc_options=_ALL_UC_OPTIONS)
 
 
+def _validate_form(form) -> str | None:
+    """返回错误消息或 None。"""
+    if not form.get("menu_label", "").strip():
+        return "菜单名称不能为空"
+    if not form.get("menu_description", "").strip():
+        return "描述不能为空"
+    if form.get("menu_input_type", "text") not in ("text", "photo"):
+        return "输入类型只能是 text 或 photo"
+    wf_file = form.get("workflow_file", "").strip()
+    if not wf_file:
+        return "workflow_file 不能为空"
+    if "/" in wf_file or "\\" in wf_file or ".." in wf_file:
+        return "workflow_file 不允许路径"
+    from pathlib import Path
+    if not (Path("data/comfy_workflows") / wf_file).exists():
+        return f"workflow 文件不存在: {wf_file}"
+    return None
+
+
 @app.route("/edit/<key>", methods=["GET", "POST"])
 @login_required
 def edit_workflow(key: str):
@@ -1008,7 +1041,7 @@ def edit_workflow(key: str):
     error = None
     if request.method == "POST":
         comfy = build_comfy_from_form(request.form)
-        comfy["workflow_file"] = data["comfy"].get("workflow_file", "")
+        comfy["workflow_file"] = request.form.get("workflow_file", "").strip()
         comfy["is_img2img"] = request.form.get("is_img2img") == "true"
         comfy["label"] = request.form.get("comfy_label", "").strip()
         comfy["model_selectable"] = request.form.get("model_selectable") == "true"
@@ -1253,9 +1286,15 @@ def api_upload_comfy_workflow():
     if not file:
         return {"error": "未选择文件"}, 400
 
-    filename_str = Path(file.filename).name
-    if "/" in filename_str or "\\" in filename_str or ".." in filename_str:
+    import re
+    raw_name = file.filename or ""
+    # 先校验原始文件名（Path().name 会截掉路径，无法检测 ../）
+    if "/" in raw_name or "\\" in raw_name or ".." in raw_name:
         return {"error": "文件名不允许路径"}, 400
+
+    filename_str = Path(raw_name).name
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+\.json", filename_str):
+        return {"error": "文件名只能包含字母、数字、点、短横线、下划线，并以 .json 结尾"}, 400
 
     try:
         data = json.load(file)
@@ -1291,10 +1330,7 @@ def api_validate_mapping():
     if file_error:
         return {"error": file_error}, 400
 
-    comfy = {}
-    for field, value in request.form.items():
-        if value.strip():
-            comfy[field] = value.strip()
+    ALLOWED_COMFY_FIELDS = {
 
     report = validate_nodes(comfy)
     errors = [r for r in report if r["status"] == "error"]
@@ -1365,11 +1401,15 @@ CMD ["uv", "run", "python", "-m", "admin.app"]
       dockerfile: Dockerfile.admin
     container_name: sd-admin
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
     env_file:
       - .env
     volumes:
       - ./data:/app/data
 ```
+
+**注意：端口已在基础 `docker-compose.yml` 中定义，linux/windows override 文件无需重复。**
 
 - [ ] **Step 3: 更新 `docker-compose.linux.yml` 添加 sd-admin 网络配置**
 
@@ -1378,8 +1418,7 @@ services:
   sd-bot:
     network_mode: host
   sd-admin:
-    ports:
-      - "127.0.0.1:8080:8080"
+    network_mode: host
 ```
 
 - [ ] **Step 4: 更新 `docker-compose.windows.yml` 添加 sd-admin 网络配置**
@@ -1393,8 +1432,7 @@ services:
       PROXY_URL: socks5://host.docker.internal:10808
       COMFY_API_BASE: http://host.docker.internal:8188
   sd-admin:
-    ports:
-      - "127.0.0.1:8080:8080"
+    # 端口已在基础 docker-compose.yml 中定义，无需重复
 ```
 
 - [ ] **Step 5: Commit**
@@ -1431,12 +1469,19 @@ if is_video and {"comfy_video_aspect", "comfy_video_resolution", "comfy_video_fr
     # ... existing video code ...
 ```
 
-尺寸分支改为：
+尺寸分支改为同时检查 `user_configurable` 和节点能力：
 
 ```python
-elif not wf_config.get("is_img2img", False) and {"comfy_width", "comfy_height"}.issubset(uc):
+elif (
+    not wf_config.get("is_img2img", False)
+    and {"comfy_width", "comfy_height"}.issubset(uc)
+    and wf_config.get("width_node") and wf_config.get("width_key")
+    and wf_config.get("height_node") and wf_config.get("height_key")
+):
     # ... existing size code ...
 ```
+
+视频分支同理，除了 `user_configurable` 还要确认 `output_type == "video"` 且相关节点字段存在。
 
 - [ ] **Step 2: 在 `_add_middle_rows` 中添加 `user_configurable` 检查**
 
@@ -1497,7 +1542,7 @@ git commit -m "feat: 菜单双重判断 — user_configurable + 节点能力共�
 
 ---
 
-### Task 9: 将现有 ComfyUI workflow JSON 从 data/ 移到 data/comfy_workflows/ (path 字段迁移)
+### Task 9: 支持 workflow_file 并将配置引用 data/comfy_workflows/ (旧文件保留不删)
 
 **Files:**
 - Modify: `services/comfy_api.py` (`_load_workflow` 使用 `workflow_file` 优先，回退 `path`)
@@ -1509,16 +1554,17 @@ git commit -m "feat: 菜单双重判断 — user_configurable + 节点能力共�
 找到 `path = Path(wf_config["path"])` 行，改为：
 
 ```python
-wf_file = wf_config.get("workflow_file", wf_config.get("path", ""))
-if not wf_file:
-    raise ComfyWorkflowError(f"Workflow '{wf_key}' 缺少 workflow_file/path")
-
-# 纯文件名 → data/comfy_workflows/ 目录；含路径 → 原样使用
-name = Path(wf_file).name
-if name == wf_file and "/" not in wf_file and "\\" not in wf_file:
+# workflow_file: 新字段，只允许纯文件名，路径固定为 data/comfy_workflows/
+if wf_config.get("workflow_file"):
+    wf_file = wf_config["workflow_file"]
+    if Path(wf_file).name != wf_file or "/" in wf_file or "\\" in wf_file or ".." in wf_file:
+        raise ComfyWorkflowError("workflow_file 只能是文件名")
     path = Path("data/comfy_workflows") / wf_file
+# path: 旧字段，仅兼容保留（导出脚本已将旧配置转为 workflow_file）
+elif wf_config.get("path"):
+    path = Path(wf_config["path"])
 else:
-    path = Path(wf_file)
+    raise ComfyWorkflowError(f"Workflow '{wf_key}' 缺少 workflow_file/path")
 ```
 
 - [ ] **Step 2: 验证 Bot 导入**
@@ -1546,7 +1592,11 @@ git commit -m "feat: _load_workflow 支持 workflow_file (data/comfy_workflows/)
 
 ---
 
-### Task 10: 阶段 5 — 热加载 (可选, 按需执行)
+### Task 10: 阶段 5 — 热加载 (可选, 不推荐第一版执行)
+
+**Note:** 当前计划使用重新赋值 `_registry, _comfy_workflows = _load_from_files()` 但项目中大量代码使用 `from config import COMFY_WORKFLOWS` 直接引用模块级变量，reload 后旧引用不会更新。**第一版不实施热加载，配置变更后重启 Bot 生效。**
+
+若后续需要热加载，推荐**方案 B（原地更新 dict/list 内容）**而非重新赋值：
 
 **Files:**
 - Create: `services/workflow_config.py`
@@ -1555,10 +1605,10 @@ git commit -m "feat: _load_workflow 支持 workflow_file (data/comfy_workflows/)
 
 **Note:** 此项为可选阶段，根据实际需求决定是否实施。第一版先接受重启生效。
 
-- [ ] **Step 1: 创建 `services/workflow_config.py`**
+- [ ] **Step 1: 创建 `services/workflow_config.py` 使用原地更新方案**
 
 ```python
-"""工作流配置管理器，支持运行时重载。"""
+"""工作流配置管理器，支持运行时热加载（原地更新 dict/list 避免已导入引用失效）。"""
 
 import json
 import logging
@@ -1566,22 +1616,18 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_REGISTRY = None
-_DEFAULT_COMFY = None
 _registry: list = []
 _comfy_workflows: dict = {}
 
 
-def init(default_registry, default_comfy):
-    global _DEFAULT_REGISTRY, _DEFAULT_COMFY
-    _DEFAULT_REGISTRY = default_registry
-    _DEFAULT_COMFY = default_comfy
-    reload()
-
-
 def reload():
-    global _registry, _comfy_workflows
-    _registry, _comfy_workflows = _load_from_files()
+    """从文件重新加载并原地更新 registry 和 comfy_workflows。"""
+    new_registry, new_comfy = _load_from_files()
+    _registry.clear()
+    _registry.extend(new_registry)
+    _comfy_workflows.clear()
+    _comfy_workflows.update(new_comfy)
+    logger.info("热加载完成: %s workflows", len(_registry))
 
 
 def get_registry() -> list:
@@ -1593,35 +1639,7 @@ def get_comfy_workflows() -> dict:
 
 
 def _load_from_files():
-    wf_dir = Path("data/workflows")
-    if not wf_dir.exists():
-        return _DEFAULT_REGISTRY, _DEFAULT_COMFY
-
-    files = sorted(wf_dir.glob("*.json"))
-    if not files:
-        return _DEFAULT_REGISTRY, _DEFAULT_COMFY
-
-    reg = []
-    cw = {}
-    for f in files:
-        try:
-            with open(f, encoding="utf-8") as fp:
-                data = json.load(fp)
-            if data.get("schema_version") != 1:
-                continue
-            if f.stem != data.get("key", ""):
-                continue
-            if not data.get("enabled", True):
-                continue
-            reg.append({"key": data["key"], **data.get("menu", {})})
-            if data.get("comfy"):
-                cw[data["key"]] = {
-                    **data["comfy"],
-                    "user_configurable": data.get("user_configurable", []),
-                }
-        except Exception:
-            logger.warning("跳过无效配置: %s", f.name, exc_info=True)
-    return reg, cw
+    # ... (同 config.py _load_workflows 逻辑)
 ```
 
 - [ ] **Step 2: 更新 `config.py` 使用配置管理器**

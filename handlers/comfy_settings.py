@@ -17,13 +17,44 @@ from ui.keyboards import comfy_generation_menu, build_toggle_row
 logger = logging.getLogger(__name__)
 
 
+# ═══ 辅助函数 ═══
+
+def _can_config_size(wf_config, uc):
+    return (
+        {"comfy_width", "comfy_height"}.issubset(uc)
+        and wf_config.get("width_node") and wf_config.get("width_key")
+        and wf_config.get("height_node") and wf_config.get("height_key")
+    )
+
+def _can_config_model(wf_config, uc):
+    return (
+        "comfy_model" in uc
+        and wf_config.get("model_selectable", True)
+        and wf_config.get("model_node") and wf_config.get("model_key")
+    )
+
+def _can_config_face_prompt(wf_config, uc):
+    return (
+        "comfy_face_prompt" in uc
+        and wf_config.get("face_detailer_prompt_node")
+    )
+
+def _can_config_lora(wf_config, uc):
+    return "comfy_lora_variant" in uc and wf_config.get("lora_node")
+
+
 # ═══ 菜单渲染 ═══
 
 def _add_dimension_rows(keyboard: list, info_lines: list,
                         wf_config: dict, settings: dict) -> None:
     """追加尺寸/视频行（原 insert(1) 位置）。"""
+    uc = wf_config.get("user_configurable", [])
     is_video = wf_config.get("output_type") == "video"
-    if is_video:
+    if (is_video
+            and {"comfy_video_aspect", "comfy_video_resolution", "comfy_video_frames"}.issubset(uc)
+            and wf_config.get("video_width_node") and wf_config.get("video_width_key")
+            and wf_config.get("video_height_node") and wf_config.get("video_height_key")
+            and wf_config.get("video_frames_node") and wf_config.get("video_frames_key")):
         aspect = settings.get("comfy_video_aspect", "9:16")
         aspect_cfg = COMFY_VIDEO_ASPECTS.get(aspect, COMFY_VIDEO_ASPECTS["9:16"])
         resolution = settings.get("comfy_video_resolution", "480p")
@@ -43,7 +74,10 @@ def _add_dimension_rows(keyboard: list, info_lines: list,
         keyboard.append([
             InlineKeyboardButton("视频长度", callback_data="comfy_video_length"),
         ])
-    elif not wf_config.get("is_img2img", False):
+    elif (
+        not wf_config.get("is_img2img", False)
+        and _can_config_size(wf_config, uc)
+    ):
         current_w = settings.get("comfy_width", 768)
         current_h = settings.get("comfy_height", 1280)
         info_lines.append(f"尺寸: {current_w}×{current_h}")
@@ -55,8 +89,10 @@ def _add_dimension_rows(keyboard: list, info_lines: list,
 def _add_middle_rows(keyboard: list, info_lines: list,
                      wf_config: dict, settings: dict) -> None:
     """追加 LoRA/开关/krea2/脸部提示词行（原 insert(-2) 位置）。"""
+    uc = wf_config.get("user_configurable", [])
+
     # LoRA 变体（zit-pussy 等）
-    if wf_config.get("lora_node"):
+    if _can_config_lora(wf_config, uc):
         variant_key = settings.get("comfy_lora_variant", "normal")
         variant = COMFY_LORA_VARIANTS.get(variant_key, COMFY_LORA_VARIANTS["normal"])
         info_lines.append(f"LoRA变体: {variant['label']}")
@@ -67,17 +103,17 @@ def _add_middle_rows(keyboard: list, info_lines: list,
     # 三级开关
     toggle_row = []
     toggle_text_parts = []
-    if wf_config.get("upscale_switch_node"):
+    if wf_config.get("upscale_switch_node") and "comfy_upscale_enabled" in uc:
         upscale_on = settings.get("comfy_upscale_enabled", True)
         label = "🔍" if upscale_on else "🔍✖"
         toggle_row.append(InlineKeyboardButton(label, callback_data="comfy_upscale_toggle"))
         toggle_text_parts.append(f"放大={'ON' if upscale_on else 'OFF'}")
-    if wf_config.get("pussydetailer_switch_node"):
+    if wf_config.get("pussydetailer_switch_node") and "comfy_pussydetailer_enabled" in uc:
         pussydetailer_on = settings.get("comfy_pussydetailer_enabled", True)
         label = "🅿️" if pussydetailer_on else "🅿️✖"
         toggle_row.append(InlineKeyboardButton(label, callback_data="comfy_pussydetailer_toggle"))
         toggle_text_parts.append(f"精修={'ON' if pussydetailer_on else 'OFF'}")
-    if wf_config.get("facedetailer_switch_node"):
+    if wf_config.get("facedetailer_switch_node") and "comfy_facedetailer_enabled" in uc:
         facedetailer_on = settings.get("comfy_facedetailer_enabled", True)
         label = "👤" if facedetailer_on else "👤✖"
         toggle_row.append(InlineKeyboardButton(label, callback_data="comfy_facedetailer_toggle"))
@@ -87,7 +123,7 @@ def _add_middle_rows(keyboard: list, info_lines: list,
         keyboard.append(toggle_row)
 
     # krea2 LoRA 开关 + 强度
-    if wf_config.get("lora_enable_node"):
+    if wf_config.get("lora_enable_node") and "comfy_krea2_lora_enabled" in uc:
         lora_on = settings.get("comfy_krea2_lora_enabled", False)
         lora_strength = settings.get("comfy_krea2_lora_strength", 5)
         lora_label = "🧬" if lora_on else "🧬✖"
@@ -99,7 +135,7 @@ def _add_middle_rows(keyboard: list, info_lines: list,
         ])
 
     # 脸部提示词
-    if wf_config.get("face_detailer_prompt_node"):
+    if _can_config_face_prompt(wf_config, uc):
         face_value = settings.get("comfy_face_prompt", "")
         if face_value:
             info_lines.append(
@@ -120,11 +156,12 @@ def _add_middle_rows(keyboard: list, info_lines: list,
 def _comfy_settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
     wf_key = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
     wf_config = COMFY_WORKFLOWS.get(wf_key, COMFY_WORKFLOWS[COMFY_DEFAULT_WORKFLOW])
+    uc = wf_config.get("user_configurable", [])
     model = settings.get("comfy_model", wf_config.get("default_model", "?"))
     seed = settings.get("comfy_seed", -1)
     translate = settings.get("comfy_translate", False)
     comfy_prompt = settings.get("comfy_prompt", "")
-    model_selectable = wf_config.get("model_selectable", True)
+    model_selectable = _can_config_model(wf_config, uc)
 
     seed_label = "随机" if seed == -1 else str(seed)
     prompt_preview = comfy_prompt[:30] + "..." if comfy_prompt else "（使用默认）"

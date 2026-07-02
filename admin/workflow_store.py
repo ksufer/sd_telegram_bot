@@ -1,12 +1,15 @@
 """读写 workflow 配置文件，支持原子写入和软操作。"""
 
 import json
+import re
 from pathlib import Path
 
 from admin.paths import WORKFLOW_DIR
 
 
 def load_workflow(key: str) -> dict | None:
+    if not re.fullmatch(r"[a-z0-9_-]+", key):
+        return None
     path = WORKFLOW_DIR / f"{key}.json"
     if not path.exists():
         return None
@@ -16,6 +19,8 @@ def load_workflow(key: str) -> dict | None:
 
 def save_workflow(data: dict) -> None:
     key = data["key"]
+    if not re.fullmatch(r"[a-z0-9_-]+", key):
+        raise ValueError(f"无效的工作流 key: {key}")
     WORKFLOW_DIR.mkdir(parents=True, exist_ok=True)
     path = WORKFLOW_DIR / f"{key}.json"
     tmp = path.with_suffix(".json.tmp")

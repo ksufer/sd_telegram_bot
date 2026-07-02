@@ -17,6 +17,15 @@ from ui.keyboards import comfy_generation_menu, build_toggle_row
 logger = logging.getLogger(__name__)
 
 
+def _get_workflow_config(key: str) -> dict:
+    """安全获取 workflow 配置。COMFY_WORKFLOWS 为空时返回空字典。"""
+    if key in COMFY_WORKFLOWS:
+        return COMFY_WORKFLOWS[key]
+    if COMFY_DEFAULT_WORKFLOW in COMFY_WORKFLOWS:
+        return COMFY_WORKFLOWS[COMFY_DEFAULT_WORKFLOW]
+    return next(iter(COMFY_WORKFLOWS.values())) if COMFY_WORKFLOWS else {}
+
+
 # ═══ 辅助函数 ═══
 
 def _can_config_size(wf_config, uc):
@@ -155,7 +164,7 @@ def _add_middle_rows(keyboard: list, info_lines: list,
 
 def _comfy_settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
     wf_key = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
-    wf_config = COMFY_WORKFLOWS.get(wf_key, COMFY_WORKFLOWS[COMFY_DEFAULT_WORKFLOW])
+    wf_config = _get_workflow_config(wf_key)
     uc = wf_config.get("user_configurable", [])
     model = settings.get("comfy_model", wf_config.get("default_model", "?"))
     seed = settings.get("comfy_seed", -1)
@@ -170,7 +179,7 @@ def _comfy_settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
     # 信息文本逐行收集
     info_lines = [
         "<b>🎨 ComfyUI 设置</b>",
-        f"Workflow: {wf_config['label']}",
+        f"Workflow: {wf_config.get('label', wf_key)}",
     ]
     if model_selectable:
         info_lines.append(f"模型: <code>{model}</code>")
@@ -238,7 +247,7 @@ def _comfy_workflow_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
 
 def _comfy_model_menu(settings: dict, models: list[str]) -> tuple[str, InlineKeyboardMarkup]:
     wf_key = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
-    wf_config = COMFY_WORKFLOWS.get(wf_key, COMFY_WORKFLOWS[COMFY_DEFAULT_WORKFLOW])
+    wf_config = _get_workflow_config(wf_key)
     current = settings.get("comfy_model", wf_config.get("default_model", "?"))
     text = f"<b>选择模型</b>\n当前: <code>{current}</code>"
 

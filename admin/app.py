@@ -180,6 +180,8 @@ def new_workflow():
 
 def _validate_form(form) -> str | None:
     """返回错误消息或 None。"""
+    import re
+
     if not form.get("menu_label", "").strip():
         return "菜单名称不能为空"
     if not form.get("menu_description", "").strip():
@@ -189,6 +191,8 @@ def _validate_form(form) -> str | None:
     wf_file = form.get("workflow_file", "").strip()
     if not wf_file:
         return "workflow_file 不能为空"
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+\.json", wf_file):
+        return "workflow_file 只能包含字母、数字、点、短横线、下划线，并以 .json 结尾"
     if "/" in wf_file or "\\" in wf_file or ".." in wf_file:
         return "workflow_file 不允许路径"
     if not (COMFY_WORKFLOW_DIR / wf_file).exists():
@@ -271,6 +275,7 @@ def archive_handler(key: str):
 
 @app.route("/api/upload-comfy-workflow", methods=["POST"])
 @login_required
+@require_csrf
 def api_upload_comfy_workflow():
     """上传原始 ComfyUI workflow JSON 到 data/comfy_workflows/。"""
     import re
@@ -309,6 +314,7 @@ def api_upload_comfy_workflow():
 
 @app.route("/api/validate-mapping", methods=["POST"])
 @login_required
+@require_csrf
 def api_validate_mapping():
     """根据表单提交的节点映射校验 workflow JSON。"""
     from admin.validators import validate_workflow_file, validate_nodes
@@ -368,4 +374,4 @@ def api_validate_mapping():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080, debug=False)
+    app.run(host="127.0.0.1", port=8080, debug=False)

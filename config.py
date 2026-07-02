@@ -381,6 +381,32 @@ _DEFAULT_COMFY_WORKFLOWS = {
     },
 }
 
+# 根据 comfy 配置推断默认用户可编辑项
+def _infer_user_configurable(comfy: dict) -> list[str]:
+    items = ["comfy_seed", "comfy_translate", "comfy_prompt"]
+    if comfy.get("model_selectable", True):
+        items.append("comfy_model")
+    if comfy.get("width_node"):
+        items.extend(["comfy_width", "comfy_height"])
+    if comfy.get("output_type") == "video":
+        items.extend(["comfy_video_aspect", "comfy_video_resolution", "comfy_video_frames"])
+    if comfy.get("upscale_switch_node"):
+        items.append("comfy_upscale_enabled")
+    if comfy.get("pussydetailer_switch_node"):
+        items.append("comfy_pussydetailer_enabled")
+    if comfy.get("facedetailer_switch_node"):
+        items.append("comfy_facedetailer_enabled")
+    if comfy.get("lora_node"):
+        items.append("comfy_lora_variant")
+    if comfy.get("face_detailer_prompt_node"):
+        items.append("comfy_face_prompt")
+    if comfy.get("lora_enable_node"):
+        items.extend(["comfy_krea2_lora_enabled", "comfy_krea2_lora_strength"])
+    return items
+
+for key, cfg in _DEFAULT_COMFY_WORKFLOWS.items():
+    cfg.setdefault("user_configurable", _infer_user_configurable(cfg))
+
 # 兼容旧代码（从默认 workflow 取值）
 _COMFY_DEFAULT_WF = _DEFAULT_COMFY_WORKFLOWS[COMFY_DEFAULT_WORKFLOW]
 COMFY_WORKFLOW_PATH = _COMFY_DEFAULT_WF.get("workflow_file", _COMFY_DEFAULT_WF.get("path", ""))
@@ -579,6 +605,7 @@ def _load_workflows():
             menu = data.get("menu", {})
             registry.append({
                 "key": key,
+                "comfy_workflow": key,
                 **menu,
             })
 

@@ -63,7 +63,11 @@ class ComfyTimeoutError(Exception):
 
 def _get_wf_config(settings: dict) -> dict:
     wf_key = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
-    return COMFY_WORKFLOWS.get(wf_key, COMFY_WORKFLOWS[COMFY_DEFAULT_WORKFLOW])
+    if wf_key in COMFY_WORKFLOWS:
+        return COMFY_WORKFLOWS[wf_key]
+    if COMFY_DEFAULT_WORKFLOW in COMFY_WORKFLOWS:
+        return COMFY_WORKFLOWS[COMFY_DEFAULT_WORKFLOW]
+    return next(iter(COMFY_WORKFLOWS.values())) if COMFY_WORKFLOWS else {}
 
 
 def _set_node_input(workflow: dict, node_id: str | list[str], input_key: str, value):
@@ -493,7 +497,7 @@ async def generate(prompt: str, settings: dict, seed: int,
                    uploaded_images: dict[str, str] | None = None,
                    face_prompt: str | None = None) -> tuple[ComfyOutput, int]:
     wf_key = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
-    wf_config = COMFY_WORKFLOWS.get(wf_key, COMFY_WORKFLOWS[COMFY_DEFAULT_WORKFLOW])
+    wf_config = _get_wf_config(settings)
     workflow = _load_workflow(wf_key)
     payload = _build_payload(workflow, prompt, seed, settings,
                              uploaded_image=uploaded_image,

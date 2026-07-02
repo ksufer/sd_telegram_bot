@@ -93,11 +93,15 @@ def _load_workflow(wf_key: str) -> dict:
     wf_config = COMFY_WORKFLOWS.get(wf_key)
     if wf_config is None:
         raise ComfyWorkflowError(f"未知 Workflow: {wf_key}")
-    wf_file = wf_config.get("workflow_file", wf_config.get("path", ""))
-    if "/" in wf_file or "\\" in wf_file:
-        path = Path(wf_file)
-    else:
+    if wf_config.get("workflow_file"):
+        wf_file = wf_config["workflow_file"]
+        if Path(wf_file).name != wf_file or "/" in wf_file or "\\" in wf_file or ".." in wf_file:
+            raise ComfyWorkflowError("workflow_file 只能是文件名")
         path = Path("data/comfy_workflows") / wf_file
+    elif wf_config.get("path"):
+        path = Path(wf_config["path"])
+    else:
+        raise ComfyWorkflowError(f"Workflow '{wf_key}' 缺少 workflow_file/path")
     if not path.exists():
         raise ComfyWorkflowError(f"Workflow 文件不存在: {path}")
     try:

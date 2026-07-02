@@ -5,3 +5,4 @@ services:
     environment:
       PROXY_URL: socks5://host.docker.internal:10808
       COMFY_API_BASE: http://host.docker.internal:8188
+  sd-admin: {}

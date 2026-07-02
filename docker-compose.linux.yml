@@ -1,3 +1,4 @@
 services:
   sd-bot:
     network_mode: host
+  sd-admin: {}

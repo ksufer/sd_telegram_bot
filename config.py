@@ -55,6 +55,20 @@ WORKFLOW_REGISTRY = [
         "input_type": "text",
     },
     {
+        "key": "krea2",
+        "emoji": "🧿",
+        "label": "Krea2 人像",
+        "description": "Krea2 模型文生图 + 可选 LoRA + 脸部精修",
+        "how_to": (
+            "直接发送描述词即可\n"
+            "例如：古力娜扎，长发，连衣裙，室外\n\n"
+            "可在 ComfyUI 设置中配置 LoRA 开关/强度、脸部精修"
+        ),
+        "backend": "comfyui",
+        "comfy_workflow": "krea2",
+        "input_type": "text",
+    },
+    {
         "key": "image-to-real",
         "emoji": "📸",
         "label": "动漫转写实",
@@ -204,6 +218,38 @@ COMFY_WORKFLOWS = {
         # SD Upscale 简化提示词（避免动作/姿势产生伪影）
         "sd_upscale_prompt_node": "120",
         "sd_upscale_prompt_key": "text",
+    },
+    "krea2": {
+        "label": "Krea2 人像（文生图+LoRA+脸部精修）",
+        "path": "data/krea2-zitface.json",
+        "is_img2img": False,
+        "model_selectable": True,
+        "prompt_node": "52:19",
+        "prompt_key": "value",
+        "seed_node": "52:3",
+        "seed_key": "seed",
+        "model_node": "52:10",
+        "model_key": "unet_name",
+        "model_loader_class": "UNETLoader",
+        "width_node": "52:5",
+        "width_key": "width",
+        "height_node": "52:5",
+        "height_key": "height",
+        "default_model": "moodyKrea2Mix_v20OrientalEdition.safetensors",
+        # LoRA
+        "lora_enable_node": "52:23",
+        "lora_enable_key": "value",
+        "lora_strength_node": "52:15",
+        "lora_strength_key": "strength_model",
+        # FaceDetailer
+        "facedetailer_switch_node": "64",
+        "facedetailer_switch_key": "images",
+        "facedetailer_switch_on": ["57", 0],
+        "facedetailer_switch_off": ["52:8", 0],
+        "face_detailer_prompt_node": "60",
+        "face_detailer_prompt_key": "text",
+        "facedetailer_seed_node": "62",
+        "facedetailer_seed_key": "seed",
     },
     "image-to-real": {
         "label": "Image-to-Real（动漫转写实）",
@@ -514,4 +560,6 @@ DEFAULT_USER_SETTINGS = {
     "comfy_pussydetailer_enabled": True,
     "comfy_facedetailer_enabled": True,
     "comfy_face_prompt": "",  # 空=自动提取，非空=手动覆盖
+    "comfy_krea2_lora_enabled": False,
+    "comfy_krea2_lora_strength": 5,
 }

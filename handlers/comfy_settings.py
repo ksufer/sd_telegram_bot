@@ -110,6 +110,17 @@ def _comfy_settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
         text += "\n" + " | ".join(toggle_text_parts)
         keyboard.insert(-2, toggle_row)
 
+    # LoRA 开关 + 强度（krea2 等有 lora_enable_node 的 workflow 显示）
+    if wf_config.get("lora_enable_node"):
+        lora_on = settings.get("comfy_krea2_lora_enabled", False)
+        lora_strength = settings.get("comfy_krea2_lora_strength", 5)
+        lora_label = "🧬" if lora_on else "🧬✖"
+        text += f"\nLoRA: {'ON' if lora_on else 'OFF'} | 强度: {lora_strength}"
+        keyboard.insert(-2, [
+            InlineKeyboardButton(lora_label, callback_data="comfy_krea2_lora_toggle"),
+            InlineKeyboardButton(f"📊 LoRA强度({lora_strength})", callback_data="comfy_krea2_lora_strength"),
+        ])
+
     # 脸部提示词（仅有 face_detailer_prompt_node 的 workflow 显示）
     if wf_config.get("face_detailer_prompt_node"):
         face_value = settings.get("comfy_face_prompt", "")
@@ -622,146 +633,114 @@ async def pick_comfy_lora_variant_fast(update, context):
     _save_settings(context, user_id)
     label = COMFY_LORA_VARIANTS[variant]["label"]
     await _safe_answer(query, f"LoRA 变体: {label}")
-    # 重建键盘更新高亮
-    buttons = []
-    for key, v in COMFY_LORA_VARIANTS.items():
-        p = "✓ " if key == variant else ""
-        buttons.append(InlineKeyboardButton(
-            f"{p}{v['label']}", callback_data=f"comfy_lora_var:{key}"
-        ))
-    markup = InlineKeyboardMarkup([
-        buttons,
-        [
-            InlineKeyboardButton("⚙️ ComfyUI 设置", callback_data="comfy_settings"),
-            InlineKeyboardButton("关闭菜单", callback_data="close_menu"),
-        ],
-    ])
-    try:
-        await query.message.edit_reply_markup(markup)
-    except Exception:
-        pass
+    await _update_gen_keyboard(query, settings)
 
 
 # ═══ 生成后菜单键盘辅助 ═══
 
-def _build_toggle_row(settings: dict) -> list:
-    """构建三级开关行（🔍 🅿️ 👤），供生成后菜单复用"""
+def _build_toggle_row(settings: dict, wf_config: dict) -> list:
+    """构建三级开关行（🔍 🅿️ 👤），供生成后菜单复用。用 wf_config 判断工作流是否支持。"""
     row = []
-    if settings.get("comfy_upscale_enabled") is not None:
-        on = settings["comfy_upscale_enabled"]
+    if wf_config.get("upscale_switch_node"):
+        on = settings.get("comfy_upscale_enabled", True)
         row.append(InlineKeyboardButton("🔍" if on else "🔍✖", callback_data="comfy_upscale_toggle_gen"))
-    if settings.get("comfy_pussydetailer_enabled") is not None:
-        on = settings["comfy_pussydetailer_enabled"]
+    if wf_config.get("pussydetailer_switch_node"):
+        on = settings.get("comfy_pussydetailer_enabled", True)
         row.append(InlineKeyboardButton("🅿️" if on else "🅿️✖", callback_data="comfy_pussydetailer_toggle_gen"))
-    if settings.get("comfy_facedetailer_enabled") is not None:
-        on = settings["comfy_facedetailer_enabled"]
+    if wf_config.get("facedetailer_switch_node"):
+        on = settings.get("comfy_facedetailer_enabled", True)
         row.append(InlineKeyboardButton("👤" if on else "👤✖", callback_data="comfy_facedetailer_toggle_gen"))
     return row
 
 
 async def _update_gen_keyboard(query, settings):
-    """刷新生成后菜单键盘（三个 fast handler 公用）"""
-    current = settings.get("comfy_lora_variant", "normal")
-    lora_buttons = []
-    for key, variant in COMFY_LORA_VARIANTS.items():
-        p = "✓ " if key == current else ""
-        lora_buttons.append(InlineKeyboardButton(
-            f"{p}{variant['label']}", callback_data=f"comfy_lora_var:{key}"
-        ))
-    toggle_row = _build_toggle_row(settings)
-    markup = InlineKeyboardMarkup([
-        lora_buttons,
-        toggle_row,
-        [
+    """刷新生成后菜单键盘（各 fast handler 公用）"""
+    wf_key = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
+    wf_config = COMFY_WORKFLOWS.get(wf_key, COMFY_WORKFLOWS[COMFY_DEFAULT_WORKFLOW])
+
+    if wf_config.get("lora_node"):
+        # zit-pussy：LoRA 变体 + 三级开关
+        current = settings.get("comfy_lora_variant", "normal")
+        lora_buttons = []
+        for key, variant in COMFY_LORA_VARIANTS.items():
+            p = "✓ " if key == current else ""
+            lora_buttons.append(InlineKeyboardButton(
+                f"{p}{variant['label']}", callback_data=f"comfy_lora_var:{key}"
+            ))
+        toggle_row = _build_toggle_row(settings, wf_config)
+        markup = InlineKeyboardMarkup([
+            lora_buttons,
+            toggle_row,
+            [
+                InlineKeyboardButton("⚙️ ComfyUI 设置", callback_data="comfy_settings"),
+                InlineKeyboardButton("关闭菜单", callback_data="close_menu"),
+            ],
+        ])
+    elif wf_config.get("lora_enable_node"):
+        # krea2：脸部精修开关 + LoRA 开关
+        rows = []
+        toggle_row = []
+        if wf_config.get("facedetailer_switch_node"):
+            facedetailer_on = settings.get("comfy_facedetailer_enabled", True)
+            label = "👤" if facedetailer_on else "👤✖"
+            toggle_row.append(InlineKeyboardButton(label, callback_data="comfy_facedetailer_toggle_gen"))
+        lora_on = settings.get("comfy_krea2_lora_enabled", False)
+        lora_label = "🧬" if lora_on else "🧬✖"
+        toggle_row.append(InlineKeyboardButton(lora_label, callback_data="comfy_krea2_lora_toggle_gen"))
+        if toggle_row:
+            rows.append(toggle_row)
+        rows.append([
             InlineKeyboardButton("⚙️ ComfyUI 设置", callback_data="comfy_settings"),
             InlineKeyboardButton("关闭菜单", callback_data="close_menu"),
-        ],
-    ])
+        ])
+        markup = InlineKeyboardMarkup(rows)
+    else:
+        toggle_row = _build_toggle_row(settings, wf_config)
+        markup = InlineKeyboardMarkup([
+            toggle_row,
+            [
+                InlineKeyboardButton("⚙️ ComfyUI 设置", callback_data="comfy_settings"),
+                InlineKeyboardButton("关闭菜单", callback_data="close_menu"),
+            ],
+        ])
     try:
         await query.message.edit_reply_markup(markup)
     except Exception:
         pass
 
 
-# ═══ Upscale 开关 ═══
+# ═══ Toggle 开关（通用工厂，生成 settings 菜单和 fast 两个版本） ═══
 
-async def toggle_comfy_upscale(update, context):
-    """切换 SD Upscale 开关（设置菜单中）"""
+def _make_toggle_handler(key: str, default: bool, label: str, fast: bool = False):
+    """生成 toggle handler，避免 8 个重复函数。fast=True 仅刷新键盘不发消息。"""
+    async def handler(update, context):
+        query = update.callback_query
+        user_id = _get_user_id(update)
+        settings = _ensure_settings(context, user_id)
+        settings[key] = not settings.get(key, default)
+        _save_settings(context, user_id)
+        state = "ON" if settings[key] else "OFF"
+        await _safe_answer(query, f"{label} · {state}")
+        if fast:
+            await _update_gen_keyboard(query, settings)
+        else:
+            text, markup = _comfy_settings_menu(settings)
+            await _reply_menu(query, text, markup)
+    return handler
+
+
+async def start_comfy_krea2_lora_strength(update, context):
+    """进入 LoRA 强度输入模式"""
     query = update.callback_query
-    user_id = _get_user_id(update)
-    settings = _ensure_settings(context, user_id)
-    settings["comfy_upscale_enabled"] = not settings.get("comfy_upscale_enabled", True)
-    _save_settings(context, user_id)
-    state = "ON" if settings["comfy_upscale_enabled"] else "OFF"
-    await _safe_answer(query, f"SD Upscale · {state}")
-    text, markup = _comfy_settings_menu(settings)
-    await _reply_menu(query, text, markup)
-
-
-async def toggle_comfy_upscale_fast(update, context):
-    """切换 SD Upscale 开关（生成后菜单中，仅更新键盘）"""
-    query = update.callback_query
-    user_id = _get_user_id(update)
-    settings = _ensure_settings(context, user_id)
-    settings["comfy_upscale_enabled"] = not settings.get("comfy_upscale_enabled", True)
-    _save_settings(context, user_id)
-    state = "ON" if settings["comfy_upscale_enabled"] else "OFF"
-    await _safe_answer(query, f"SD Upscale · {state}")
-    await _update_gen_keyboard(query, settings)
-
-
-# ═══ PussyDetailer 开关 ═══
-
-async def toggle_comfy_pussydetailer(update, context):
-    """切换 PussyDetailer 开关（设置菜单中）"""
-    query = update.callback_query
-    user_id = _get_user_id(update)
-    settings = _ensure_settings(context, user_id)
-    settings["comfy_pussydetailer_enabled"] = not settings.get("comfy_pussydetailer_enabled", True)
-    _save_settings(context, user_id)
-    state = "ON" if settings["comfy_pussydetailer_enabled"] else "OFF"
-    await _safe_answer(query, f"PussyDetailer · {state}")
-    text, markup = _comfy_settings_menu(settings)
-    await _reply_menu(query, text, markup)
-
-
-async def toggle_comfy_pussydetailer_fast(update, context):
-    """切换 PussyDetailer 开关（生成后菜单中，仅更新键盘）"""
-    query = update.callback_query
-    user_id = _get_user_id(update)
-    settings = _ensure_settings(context, user_id)
-    settings["comfy_pussydetailer_enabled"] = not settings.get("comfy_pussydetailer_enabled", True)
-    _save_settings(context, user_id)
-    state = "ON" if settings["comfy_pussydetailer_enabled"] else "OFF"
-    await _safe_answer(query, f"PussyDetailer · {state}")
-    await _update_gen_keyboard(query, settings)
-
-
-# ═══ FaceDetailer 开关 ═══
-
-async def toggle_comfy_facedetailer(update, context):
-    """切换 FaceDetailer 开关（设置菜单中）"""
-    query = update.callback_query
-    user_id = _get_user_id(update)
-    settings = _ensure_settings(context, user_id)
-    settings["comfy_facedetailer_enabled"] = not settings.get("comfy_facedetailer_enabled", True)
-    _save_settings(context, user_id)
-    state = "ON" if settings["comfy_facedetailer_enabled"] else "OFF"
-    await _safe_answer(query, f"FaceDetailer · {state}")
-    text, markup = _comfy_settings_menu(settings)
-    await _reply_menu(query, text, markup)
-
-
-async def toggle_comfy_facedetailer_fast(update, context):
-    """切换 FaceDetailer 开关（生成后菜单中，仅更新键盘）"""
-    query = update.callback_query
-    user_id = _get_user_id(update)
-    settings = _ensure_settings(context, user_id)
-    settings["comfy_facedetailer_enabled"] = not settings.get("comfy_facedetailer_enabled", True)
-    _save_settings(context, user_id)
-    state = "ON" if settings["comfy_facedetailer_enabled"] else "OFF"
-    await _safe_answer(query, f"FaceDetailer · {state}")
-    await _update_gen_keyboard(query, settings)
+    if context.user_data is None:
+        await _safe_answer(query, "会话已过期，请重新发送 /start")
+        return
+    context.user_data["_waiting_input"] = "comfy_krea2_lora_strength"
+    await _safe_answer(query, "请输入 LoRA 强度")
+    await query.message.reply_text(
+        "请输入 LoRA 强度值（范围 -15 ~ 10，默认 5）：\n"
+        "发送 /cancel 取消操作"
+    )
 
 
 # ═══ Handler 注册 ═══
@@ -802,24 +781,29 @@ def get_handlers() -> list:
         # LoRA 变体快速切换（生成后菜单）
         CallbackQueryHandler(auth_callback(pick_comfy_lora_variant_fast),
                              pattern=r"^comfy_lora_var:"),
-        # Upscale 开关
-        CallbackQueryHandler(auth_callback(toggle_comfy_upscale),
+        # 开关（通用 toggle handler 工厂）
+        CallbackQueryHandler(auth_callback(_make_toggle_handler("comfy_upscale_enabled", True, "SD Upscale")),
                              pattern=r"^comfy_upscale_toggle$"),
-        CallbackQueryHandler(auth_callback(toggle_comfy_upscale_fast),
+        CallbackQueryHandler(auth_callback(_make_toggle_handler("comfy_upscale_enabled", True, "SD Upscale", fast=True)),
                              pattern=r"^comfy_upscale_toggle_gen$"),
-        # PussyDetailer 开关
-        CallbackQueryHandler(auth_callback(toggle_comfy_pussydetailer),
+        CallbackQueryHandler(auth_callback(_make_toggle_handler("comfy_pussydetailer_enabled", True, "PussyDetailer")),
                              pattern=r"^comfy_pussydetailer_toggle$"),
-        CallbackQueryHandler(auth_callback(toggle_comfy_pussydetailer_fast),
+        CallbackQueryHandler(auth_callback(_make_toggle_handler("comfy_pussydetailer_enabled", True, "PussyDetailer", fast=True)),
                              pattern=r"^comfy_pussydetailer_toggle_gen$"),
-        # FaceDetailer 开关
-        CallbackQueryHandler(auth_callback(toggle_comfy_facedetailer),
+        CallbackQueryHandler(auth_callback(_make_toggle_handler("comfy_facedetailer_enabled", True, "FaceDetailer")),
                              pattern=r"^comfy_facedetailer_toggle$"),
-        CallbackQueryHandler(auth_callback(toggle_comfy_facedetailer_fast),
+        CallbackQueryHandler(auth_callback(_make_toggle_handler("comfy_facedetailer_enabled", True, "FaceDetailer", fast=True)),
                              pattern=r"^comfy_facedetailer_toggle_gen$"),
+        CallbackQueryHandler(auth_callback(_make_toggle_handler("comfy_krea2_lora_enabled", False, "Krea2 LoRA")),
+                             pattern=r"^comfy_krea2_lora_toggle$"),
+        CallbackQueryHandler(auth_callback(_make_toggle_handler("comfy_krea2_lora_enabled", False, "Krea2 LoRA", fast=True)),
+                             pattern=r"^comfy_krea2_lora_toggle_gen$"),
         # 脸部提示词
         CallbackQueryHandler(auth_callback(start_comfy_face_prompt_input),
                              pattern=r"^comfy_face_prompt_set$"),
         CallbackQueryHandler(auth_callback(clear_comfy_face_prompt),
                              pattern=r"^comfy_face_prompt_clear$"),
+        # Krea2 LoRA 强度
+        CallbackQueryHandler(auth_callback(start_comfy_krea2_lora_strength),
+                             pattern=r"^comfy_krea2_lora_strength$"),
     ]

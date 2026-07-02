@@ -107,6 +107,9 @@ async def handle_text(update, context):
         elif waiting == "comfy_seed":
             await _handle_comfy_seed_input(update, context)
             return
+        elif waiting == "comfy_krea2_lora_strength":
+            await _handle_krea2_lora_strength_input(update, context)
+            return
         elif waiting == "sd_seed" or context.user_data.get("_waiting_seed"):
             await _handle_seed_input(update, context)
             return
@@ -410,6 +413,26 @@ async def _handle_comfy_face_prompt_input(update, context):
     _save_settings(context, user_id)
 
     await update.message.reply_text(f"脸部提示词已设置: {text[:80]}{'...' if len(text) > 80 else ''}")
+    txt, markup = _comfy_settings_menu_shim(settings)
+    await update.message.reply_text(txt, reply_markup=markup, parse_mode="HTML")
+
+
+async def _handle_krea2_lora_strength_input(update, context):
+    user_id = update.effective_user.id
+    settings = _ensure_settings(context, user_id)
+    try:
+        strength = int(update.message.text.strip())
+        if strength < -15 or strength > 10:
+            await update.message.reply_text("LoRA 强度范围为 -15 ~ 10，请重新输入。发送 /cancel 取消。")
+            return
+        settings["comfy_krea2_lora_strength"] = strength
+    except ValueError:
+        await update.message.reply_text("请输入有效的整数（-15 ~ 10）。发送 /cancel 取消。")
+        return
+
+    context.user_data["_waiting_input"] = None
+    _save_settings(context, user_id)
+    await update.message.reply_text(f"LoRA 强度已设置为: {strength}")
     txt, markup = _comfy_settings_menu_shim(settings)
     await update.message.reply_text(txt, reply_markup=markup, parse_mode="HTML")
 

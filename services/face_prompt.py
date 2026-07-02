@@ -1,8 +1,9 @@
 import logging
+import re
 
 from openai import AsyncOpenAI
 
-from config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL
+from config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, NSFW_BODY_KEYWORDS
 from services.network import retry_on_network_error
 
 logger = logging.getLogger(__name__)
@@ -20,15 +21,22 @@ FACE_EXTRACT_PROMPT = (
 )
 
 
+def _sanitize_nsfw(text: str) -> str:
+    """将 NSFW 敏感词替换为 [body] 占位符，避免发送到第三方 API。"""
+    for kw in NSFW_BODY_KEYWORDS:
+        text = re.sub(re.escape(kw), "[body]", text, flags=re.IGNORECASE)
+    return text
+
+
 async def extract_face_prompt(text: str) -> str:
-    """从主提示词中提取人物+画风关键词，失败时返回原文。"""
+    """从主提示词中提取人物+画风关键词。发送前脱敏，失败时返回空字符串。"""
     try:
         response = await retry_on_network_error(
             lambda: _client.chat.completions.create(
                 model="deepseek-v4-flash",
                 messages=[
                     {"role": "system", "content": FACE_EXTRACT_PROMPT},
-                    {"role": "user", "content": text},
+                    {"role": "user", "content": _sanitize_nsfw(text)},
                 ],
                 temperature=0.3,
                 max_tokens=1024,
@@ -36,5 +44,5 @@ async def extract_face_prompt(text: str) -> str:
         )
         return response.choices[0].message.content.strip()
     except Exception:
-        logger.warning("脸部提示词提取失败，使用原文", exc_info=True)
-        return text
+        logger.warning("脸部提示词提取失败，留空", exc_info=True)
+        return ""

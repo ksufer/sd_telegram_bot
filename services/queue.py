@@ -201,7 +201,7 @@ class GenerationQueue:
                 wf_config = COMFY_WORKFLOWS.get(wf_key, {})
                 seed = int(settings.get("comfy_seed", -1))
                 if seed == -1:
-                    seed = random.randint(0, 2**63 - 1)
+                    seed = random.randint(0, 1125899906842624)  # ComfyUI 种子最大值 2^50
                 uploaded_image = settings.get("_uploaded_image")
                 uploaded_images = settings.get("_uploaded_images")
                 # Face prompt 提取（脸部重绘专用）
@@ -487,6 +487,28 @@ def _comfy_generation_menu(context_id: str, settings: dict | None = None) -> Inl
                 toggle_row.append(InlineKeyboardButton(label, callback_data="comfy_facedetailer_toggle_gen"))
             if toggle_row:
                 rows.append(toggle_row)
+            rows.append([
+                InlineKeyboardButton("⚙️ ComfyUI 设置", callback_data="comfy_settings"),
+                InlineKeyboardButton("关闭菜单", callback_data="close_menu"),
+            ])
+            return InlineKeyboardMarkup(rows)
+        # krea2 等有 lora_enable_node 的 workflow：显示 LoRA 开关 + 脸部精修开关
+        if wf_config.get("lora_enable_node"):
+            rows = []
+            toggle_row = []
+            if wf_config.get("facedetailer_switch_node"):
+                facedetailer_on = settings.get("comfy_facedetailer_enabled", True)
+                label = "👤" if facedetailer_on else "👤✖"
+                toggle_row.append(InlineKeyboardButton(label, callback_data="comfy_facedetailer_toggle_gen"))
+            lora_on = settings.get("comfy_krea2_lora_enabled", False)
+            lora_label = "🧬" if lora_on else "🧬✖"
+            toggle_row.append(InlineKeyboardButton(lora_label, callback_data="comfy_krea2_lora_toggle_gen"))
+            if toggle_row:
+                rows.append(toggle_row)
+            rows.append([
+                InlineKeyboardButton("🔁 复用本次 Seed", callback_data=f"comfy_reuse_seed_{context_id}"),
+                InlineKeyboardButton("🎲 随机 Seed", callback_data="comfy_random_seed"),
+            ])
             rows.append([
                 InlineKeyboardButton("⚙️ ComfyUI 设置", callback_data="comfy_settings"),
                 InlineKeyboardButton("关闭菜单", callback_data="close_menu"),

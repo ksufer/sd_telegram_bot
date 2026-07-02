@@ -193,11 +193,18 @@ def _build_payload(workflow: dict, prompt: str, seed: int, settings: dict,
 
     if "facedetailer_switch_node" in wf:
         facedetailer_on = settings.get("comfy_facedetailer_enabled", True)
-        # ON: Save(108) ← FaceDetailer(111). OFF: skip 111.
-        save_source = (
-            [wf["pussydetailer_switch_node"], 0] if facedetailer_on
-            else pre_face_source
-        )
+        if "facedetailer_switch_on" in wf:
+            # 简单模式 (krea2)：显式 ON/OFF 源
+            save_source = (
+                wf["facedetailer_switch_on"] if facedetailer_on
+                else wf["facedetailer_switch_off"]
+            )
+        else:
+            # 级联模式 (zit-pussy)：动态计算源
+            save_source = (
+                [wf["pussydetailer_switch_node"], 0] if facedetailer_on
+                else pre_face_source
+            )
         _set_node_input(workflow, wf["facedetailer_switch_node"],
                         wf["facedetailer_switch_key"], save_source)
 
@@ -214,13 +221,23 @@ def _build_payload(workflow: dict, prompt: str, seed: int, settings: dict,
         detailer_prompt = variant["detailer_prompt"] or final_prompt
         _set_node_input(workflow, wf["detailer_prompt_node"],
                         wf["detailer_prompt_key"], detailer_prompt)
-    # FaceDetailer prompt（zit-pussy-face 脸部重绘）
+    # LoRA 开关 + 强度（krea2）
+    if "lora_enable_node" in wf:
+        lora_enabled = settings.get("comfy_krea2_lora_enabled", False)
+        _set_node_input(workflow, wf["lora_enable_node"], wf["lora_enable_key"], lora_enabled)
+    if "lora_strength_node" in wf:
+        lora_strength = max(-15, min(10, settings.get("comfy_krea2_lora_strength", 5)))
+        _set_node_input(workflow, wf["lora_strength_node"], wf["lora_strength_key"], lora_strength)
+    # FaceDetailer seed（krea2 脸部精修 seed 跟随主 seed）
+    if "facedetailer_seed_node" in wf:
+        _set_node_input(workflow, wf["facedetailer_seed_node"],
+                        wf["facedetailer_seed_key"], seed)
+    # FaceDetailer prompt（zit-pussy-face / krea2 脸部重绘）
     if "face_detailer_prompt_node" in wf:
-        face_text = (face_prompt
-                     or settings.get("comfy_face_prompt", "")
-                     or final_prompt)
-        _set_node_input(workflow, wf["face_detailer_prompt_node"],
-                        wf["face_detailer_prompt_key"], face_text)
+        face_text = face_prompt or settings.get("comfy_face_prompt", "")
+        if face_text:
+            _set_node_input(workflow, wf["face_detailer_prompt_node"],
+                            wf["face_detailer_prompt_key"], face_text)
     # SD Upscale 提示词：face_prompt（人物+画风）+ 原 prompt 中的 NSFW 身体关键词
     # 排除动作词避免伪影，但保留 NSFW 词防止模型过拟合产生遮挡
     if "sd_upscale_prompt_node" in wf:

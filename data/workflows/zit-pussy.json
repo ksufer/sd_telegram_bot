@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "key": "zit-pussy",
+  "enabled": true,
+  "menu": {
+    "emoji": "💦",
+    "label": "ZIT Pussy",
+    "description": "Z-Image-Turbo 文生图 + Pussy 精修 + SD 2x 放大",
+    "how_to": "直接发送描述词即可\n例如：a girl sitting on bed, spread legs\n\n自动进行 pussy 区域 FaceDetailer 精修\n最终 2x SD Upscale 放大输出",
+    "input_type": "text",
+    "backend": "comfyui"
+  },
+  "comfy": {
+    "label": "ZIT Pussy（文生图+精修+放大+脸部修复）",
+    "is_img2img": false,
+    "prompt_node": "96",
+    "prompt_key": "text",
+    "seed_node": "97",
+    "seed_key": "seed",
+    "model_node": "95",
+    "model_key": "unet_name",
+    "model_loader_class": "UNETLoader",
+    "width_node": "91",
+    "width_key": "width",
+    "height_node": "91",
+    "height_key": "height",
+    "default_model": "moodyProMix_zitV13.safetensors",
+    "upscale_model_node": "98",
+    "upscale_model_key": "model_name",
+    "sd_upscale_node": "88",
+    "sd_upscale_seed_key": "seed",
+    "lora_node": "102",
+    "detailer_prompt_node": "103",
+    "detailer_prompt_key": "text",
+    "upscale_switch_node": "101",
+    "upscale_switch_key": "image",
+    "upscale_switch_on": [
+      "88",
+      0
+    ],
+    "upscale_switch_off": [
+      "93",
+      0
+    ],
+    "pussydetailer_switch_node": "111",
+    "pussydetailer_switch_key": "image",
+    "facedetailer_switch_node": "108",
+    "facedetailer_switch_key": "images",
+    "face_detailer_prompt_node": "115",
+    "face_detailer_prompt_key": "text",
+    "sd_upscale_prompt_node": "120",
+    "sd_upscale_prompt_key": "text",
+    "workflow_file": "zit-up-pussy-face.json"
+  },
+  "user_configurable": [
+    "comfy_seed",
+    "comfy_translate",
+    "comfy_prompt",
+    "comfy_model",
+    "comfy_width",
+    "comfy_height",
+    "comfy_upscale_enabled",
+    "comfy_pussydetailer_enabled",
+    "comfy_facedetailer_enabled",
+    "comfy_lora_variant",
+    "comfy_face_prompt"
+  ]
+}

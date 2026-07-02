@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "key": "qwen-image-edit",
+  "enabled": true,
+  "menu": {
+    "emoji": "✏️",
+    "label": "图片编辑",
+    "description": "上传图片后持续修改，支持多轮编辑",
+    "how_to": "第一轮：发送一张图片 → AI 编辑后返回结果\n第二轮：回复结果图 + 新指令 → 继续修改\n例如：回复图片 + 'change hair color to blue'\n\n想换底图？直接发新图片即可重新开始",
+    "input_type": "photo",
+    "backend": "comfyui"
+  },
+  "comfy": {
+    "label": "Qwen Image Edit（图生图）",
+    "is_img2img": true,
+    "prompt_node": "119",
+    "prompt_key": "prompt",
+    "seed_node": "117",
+    "seed_key": "value",
+    "model_node": "118",
+    "model_key": "ckpt_name",
+    "model_loader_class": "CheckpointLoaderSimple",
+    "load_image_node": "78",
+    "load_image_key": "image",
+    "default_model": "Qwen-Rapid-AIO-NSFW-v11.1.safetensors",
+    "use_caption_as_prompt": true,
+    "workflow_file": "Qwen Image Edit Rapid v1.0 (api).json"
+  },
+  "user_configurable": [
+    "comfy_seed",
+    "comfy_translate",
+    "comfy_prompt",
+    "comfy_model"
+  ]
+}

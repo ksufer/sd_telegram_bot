@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "key": "krea2",
+  "enabled": true,
+  "menu": {
+    "emoji": "🧿",
+    "label": "Krea2 人像",
+    "description": "Krea2 模型文生图 + 可选 LoRA + 脸部精修",
+    "how_to": "直接发送描述词即可\n例如：古力娜扎，长发，连衣裙，室外\n\n可在 ComfyUI 设置中配置 LoRA 开关/强度、脸部精修",
+    "input_type": "text",
+    "backend": "comfyui"
+  },
+  "comfy": {
+    "label": "Krea2 人像（文生图+LoRA+脸部精修）",
+    "is_img2img": false,
+    "model_selectable": true,
+    "prompt_node": "52:19",
+    "prompt_key": "value",
+    "seed_node": "52:3",
+    "seed_key": "seed",
+    "model_node": "52:10",
+    "model_key": "unet_name",
+    "model_loader_class": "UNETLoader",
+    "width_node": "52:5",
+    "width_key": "width",
+    "height_node": "52:5",
+    "height_key": "height",
+    "default_model": "moodyKrea2Mix_v20OrientalEdition.safetensors",
+    "lora_enable_node": "52:23",
+    "lora_enable_key": "value",
+    "lora_strength_node": "52:15",
+    "lora_strength_key": "strength_model",
+    "facedetailer_switch_node": "64",
+    "facedetailer_switch_key": "images",
+    "facedetailer_switch_on": [
+      "57",
+      0
+    ],
+    "facedetailer_switch_off": [
+      "52:8",
+      0
+    ],
+    "face_detailer_prompt_node": "60",
+    "face_detailer_prompt_key": "text",
+    "facedetailer_seed_node": "62",
+    "facedetailer_seed_key": "seed",
+    "workflow_file": "krea2-zitface.json"
+  },
+  "user_configurable": [
+    "comfy_seed",
+    "comfy_translate",
+    "comfy_prompt",
+    "comfy_model",
+    "comfy_width",
+    "comfy_height",
+    "comfy_facedetailer_enabled",
+    "comfy_face_prompt",
+    "comfy_krea2_lora_enabled",
+    "comfy_krea2_lora_strength"
+  ]
+}

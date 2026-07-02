@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "key": "qwen-2pic-edit",
+  "enabled": true,
+  "menu": {
+    "emoji": "🖼️",
+    "label": "Qwen 双图编辑",
+    "description": "上传2张图片+提示词，AI 合成编辑（换脸/换装）",
+    "how_to": "1. 发送第一张图片（群聊需 @bot）\n2. 发送第二张图片，可附带文字描述（群聊需 @bot）\n3. 若未附带描述，再发送文字描述\n\n示例：图1=人物A，图2=人物B\n描述=将图1的脸换成图2的脸",
+    "input_type": "photo",
+    "backend": "comfyui"
+  },
+  "comfy": {
+    "label": "Qwen 双图编辑",
+    "is_img2img": true,
+    "model_selectable": true,
+    "use_caption_as_prompt": true,
+    "prompt_node": "119",
+    "prompt_key": "prompt",
+    "seed_node": "117",
+    "seed_key": "value",
+    "model_node": "118",
+    "model_key": "ckpt_name",
+    "model_loader_class": "CheckpointLoaderSimple",
+    "load_image_nodes": {
+      "image1": {
+        "node": "78",
+        "key": "image"
+      },
+      "image2": {
+        "node": "122",
+        "key": "image"
+      }
+    },
+    "default_model": "Qwen-Rapid-AIO-NSFW-v11.1.safetensors",
+    "workflow_file": "qwen_2pic_edit.json"
+  },
+  "user_configurable": [
+    "comfy_seed",
+    "comfy_translate",
+    "comfy_prompt",
+    "comfy_model"
+  ]
+}

@@ -1,0 +1,515 @@
+{
+  "88": {
+    "inputs": {
+      "upscale_by": 2,
+      "seed": 435655543193808,
+      "steps": 3,
+      "cfg": 1,
+      "sampler_name": "dpmpp_2m_sde",
+      "scheduler": "sgm_uniform",
+      "denoise": 0.23,
+      "mode_type": "Linear",
+      "tile_width": 1024,
+      "tile_height": 1024,
+      "mask_blur": 64,
+      "tile_padding": 96,
+      "seam_fix_mode": "None",
+      "seam_fix_denoise": 1,
+      "seam_fix_width": 64,
+      "seam_fix_mask_blur": 8,
+      "seam_fix_padding": 16,
+      "force_uniform_tiles": true,
+      "tiled_decode": false,
+      "image": [
+        "93",
+        0
+      ],
+      "model": [
+        "95",
+        0
+      ],
+      "positive": [
+        "120",
+        0
+      ],
+      "negative": [
+        "92",
+        0
+      ],
+      "vae": [
+        "90",
+        0
+      ],
+      "upscale_model": [
+        "98",
+        0
+      ]
+    },
+    "class_type": "UltimateSDUpscale",
+    "_meta": {
+      "title": "Ultimate SD Upscale"
+    }
+  },
+  "89": {
+    "inputs": {
+      "clip_name": "qwen_3_4b.safetensors",
+      "type": "lumina2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "加载CLIP"
+    }
+  },
+  "90": {
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "加载VAE"
+    }
+  },
+  "91": {
+    "inputs": {
+      "width": 768,
+      "height": 1280,
+      "batch_size": 1
+    },
+    "class_type": "EmptySD3LatentImage",
+    "_meta": {
+      "title": "空Latent图像（SD3）"
+    }
+  },
+  "92": {
+    "inputs": {
+      "conditioning": [
+        "96",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "条件零化"
+    }
+  },
+  "93": {
+    "inputs": {
+      "samples": [
+        "97",
+        0
+      ],
+      "vae": [
+        "90",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE解码"
+    }
+  },
+  "94": {
+    "inputs": {
+      "shift": 3,
+      "model": [
+        "95",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingAuraFlow",
+    "_meta": {
+      "title": "采样算法（AuraFlow）"
+    }
+  },
+  "95": {
+    "inputs": {
+      "unet_name": "moodyProMix_zitV13.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "UNet加载器"
+    }
+  },
+  "96": {
+    "inputs": {
+      "text": "赵丽颖，18岁美女，知性美女，长发，灰色罩衫，开衫，露出一个乳房，大长腿，蹲姿，乳沟，氛围感，雨天，阴部，spread legs，spread pussy，高跟鞋，一只手撑伞，CCD 滤镜风格，清纯，私房写真，少女风情天真而不自知，细节丰富，光线明暗交接，光影层次丰富，朦胧美学，光的美学，lomo效果，高级感，杰作。非常规构图。柔和色彩搭配",
+      "clip": [
+        "89",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP文本编码"
+    }
+  },
+  "97": {
+    "inputs": {
+      "seed": 288206994824813,
+      "steps": 10,
+      "cfg": 1.2,
+      "sampler_name": "res_multistep",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "94",
+        0
+      ],
+      "positive": [
+        "96",
+        0
+      ],
+      "negative": [
+        "92",
+        0
+      ],
+      "latent_image": [
+        "91",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "K采样器"
+    }
+  },
+  "98": {
+    "inputs": {
+      "model_name": "4xNomosWebPhoto_RealPLKSR.pth"
+    },
+    "class_type": "UpscaleModelLoader",
+    "_meta": {
+      "title": "加载放大模型"
+    }
+  },
+  "101": {
+    "inputs": {
+      "guide_size": 1536,
+      "guide_size_for": true,
+      "max_size": 1536,
+      "seed": [
+        "106",
+        0
+      ],
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 0.8,
+      "feather": 100,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "bbox_threshold": 0.3,
+      "bbox_dilation": 15,
+      "bbox_crop_factor": 3,
+      "sam_detection_hint": "center-1",
+      "sam_dilation": 15,
+      "sam_threshold": 0.93,
+      "sam_bbox_expansion": 15,
+      "sam_mask_hint_threshold": 0.7,
+      "sam_mask_hint_use_negative": "False",
+      "drop_size": 64,
+      "wildcard": "",
+      "cycle": 1,
+      "inpaint_model": false,
+      "noise_mask_feather": 20,
+      "tiled_encode": false,
+      "tiled_decode": false,
+      "image": [
+        "88",
+        0
+      ],
+      "model": [
+        "102",
+        0
+      ],
+      "clip": [
+        "89",
+        0
+      ],
+      "vae": [
+        "90",
+        0
+      ],
+      "positive": [
+        "103",
+        0
+      ],
+      "negative": [
+        "92",
+        0
+      ],
+      "bbox_detector": [
+        "104",
+        0
+      ],
+      "sam_model_opt": [
+        "105",
+        0
+      ]
+    },
+    "class_type": "FaceDetailer",
+    "_meta": {
+      "title": "PussyDetailer"
+    }
+  },
+  "102": {
+    "inputs": {
+      "PowerLoraLoaderHeaderWidget": {
+        "type": "PowerLoraLoaderHeaderWidget"
+      },
+      "lora_1": {
+        "on": true,
+        "lora": "Z-Image-Fun-Lora-Distill-2603_UDCAI_ComfyUI.safetensors",
+        "strength": 0.5
+      },
+      "lora_2": {
+        "on": true,
+        "lora": "zimage_better_pussy_poses_v1.0.safetensors",
+        "strength": 1
+      },
+      "lora_3": {
+        "on": false,
+        "lora": "zimage_base_better_pussy_spread_v1.0.safetensors",
+        "strength": 1
+      },
+      "➕ Add Lora": "",
+      "model": [
+        "95",
+        0
+      ],
+      "clip": [
+        "89",
+        0
+      ]
+    },
+    "class_type": "Power Lora Loader (rgthree)",
+    "_meta": {
+      "title": "Power Lora Loader (rgthree)"
+    }
+  },
+  "103": {
+    "inputs": {
+      "text": "A natural close-up view of a woman's genitalia. The outer labia are softly closed, showing natural contours and subtle skin folds. Soft pink skin tone with smooth, realistic texture and even lighting.",
+      "clip": [
+        "102",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "104": {
+    "inputs": {
+      "model_name": "bbox/pussyV2.pt"
+    },
+    "class_type": "UltralyticsDetectorProvider",
+    "_meta": {
+      "title": "UltralyticsDetectorProvider"
+    }
+  },
+  "105": {
+    "inputs": {
+      "model_name": "sam_vit_b_01ec64.pth",
+      "device_mode": "AUTO"
+    },
+    "class_type": "SAMLoader",
+    "_meta": {
+      "title": "SAMLoader (Impact)"
+    }
+  },
+  "106": {
+    "inputs": {
+      "seed": 888888888
+    },
+    "class_type": "Seed (rgthree)",
+    "_meta": {
+      "title": "Seed (rgthree)"
+    }
+  },
+  "107": {
+    "inputs": {
+      "images": [
+        "88",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "sd upscale 预览"
+    }
+  },
+  "108": {
+    "inputs": {
+      "filename_prefix": "test_pussy_",
+      "format": "png",
+      "format.bit_depth": "8-bit",
+      "format.input_color_space": "sRGB",
+      "images": [
+        "111",
+        0
+      ]
+    },
+    "class_type": "SaveImageAdvanced",
+    "_meta": {
+      "title": "Save Image (Advanced)"
+    }
+  },
+  "111": {
+    "inputs": {
+      "guide_size": 1536,
+      "guide_size_for": true,
+      "max_size": 1536,
+      "seed": [
+        "106",
+        0
+      ],
+      "steps": 6,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 0.85,
+      "feather": 100,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "bbox_threshold": 0.3,
+      "bbox_dilation": 20,
+      "bbox_crop_factor": 3,
+      "sam_detection_hint": "center-1",
+      "sam_dilation": 20,
+      "sam_threshold": 0.93,
+      "sam_bbox_expansion": 20,
+      "sam_mask_hint_threshold": 0.7,
+      "sam_mask_hint_use_negative": "False",
+      "drop_size": 64,
+      "wildcard": "",
+      "cycle": 1,
+      "inpaint_model": false,
+      "noise_mask_feather": 20,
+      "tiled_encode": false,
+      "tiled_decode": false,
+      "image": [
+        "101",
+        0
+      ],
+      "model": [
+        "113",
+        0
+      ],
+      "clip": [
+        "89",
+        0
+      ],
+      "vae": [
+        "90",
+        0
+      ],
+      "positive": [
+        "115",
+        0
+      ],
+      "negative": [
+        "92",
+        0
+      ],
+      "bbox_detector": [
+        "116",
+        0
+      ],
+      "sam_model_opt": [
+        "105",
+        0
+      ]
+    },
+    "class_type": "FaceDetailer",
+    "_meta": {
+      "title": "FaceDetailer"
+    }
+  },
+  "112": {
+    "inputs": {
+      "unet_name": "z_image_turbo_bf16.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "UNet加载器"
+    }
+  },
+  "113": {
+    "inputs": {
+      "shift": 3,
+      "model": [
+        "112",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingAuraFlow",
+    "_meta": {
+      "title": "采样算法（AuraFlow）"
+    }
+  },
+  "115": {
+    "inputs": {
+      "text": "赵丽颖，18岁美女，年轻的女明星，皮肤白皙，面向镜头，\n\nCCD 滤镜风格，清纯，私房写真，细节丰富，光线明暗交接，光影层次丰富，朦胧美学，光的美学，lomo效果，高级感，杰作。非常规构图。柔和色彩搭配",
+      "clip": [
+        "89",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP文本编码"
+    }
+  },
+  "116": {
+    "inputs": {
+      "model_name": "bbox/face_yolov8m.pt"
+    },
+    "class_type": "UltralyticsDetectorProvider",
+    "_meta": {
+      "title": "UltralyticsDetectorProvider"
+    }
+  },
+  "119": {
+    "inputs": {
+      "images": [
+        "101",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "pussydetail预览"
+    }
+  },
+  "120": {
+    "inputs": {
+      "text": "",
+      "clip": [
+        "89",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP文本编码"
+    }
+  },
+  "124": {
+    "inputs": {
+      "images": [
+        "93",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "预览图像"
+    }
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "key": "image-to-video",
+  "enabled": true,
+  "menu": {
+    "emoji": "🎬",
+    "label": "图生视频",
+    "description": "上传图片，AI 生成短视频",
+    "how_to": "发送一张图片（可附带描述词）\n例如：发一张风景照 → 生成动态视频\n\n可在 ComfyUI 设置中调整视频方向和长度",
+    "input_type": "photo",
+    "backend": "comfyui"
+  },
+  "comfy": {
+    "label": "Image-to-Video（图生视频）",
+    "is_img2img": true,
+    "use_caption_as_prompt": true,
+    "model_selectable": false,
+    "output_type": "video",
+    "prompt_node": "129:93",
+    "prompt_key": "text",
+    "seed_node": "129:86",
+    "seed_key": "noise_seed",
+    "model_node": "129:95",
+    "model_key": "unet_name",
+    "model_loader_class": "UNETLoader",
+    "load_image_node": "97",
+    "load_image_key": "image",
+    "video_width_node": "129:98",
+    "video_width_key": "width",
+    "video_height_node": "129:98",
+    "video_height_key": "height",
+    "video_frames_node": "129:98",
+    "video_frames_key": "length",
+    "default_model": "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+    "workflow_file": "image_to_video.json"
+  },
+  "user_configurable": [
+    "comfy_seed",
+    "comfy_translate",
+    "comfy_prompt",
+    "comfy_video_aspect",
+    "comfy_video_resolution",
+    "comfy_video_frames"
+  ]
+}

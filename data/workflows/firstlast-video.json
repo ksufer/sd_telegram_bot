@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "key": "firstlast-video",
+  "enabled": true,
+  "menu": {
+    "emoji": "🎞️",
+    "label": "首尾帧生视频",
+    "description": "上传首帧+尾帧图片，AI 生成过渡视频",
+    "how_to": "1. 先发送首帧图片（群聊需 @bot）\n2. 再发送尾帧图片，可附带文字描述（群聊需 @bot）\n3. 如未附带描述，再发送文字说明\n\n例如：首帧=坐着的猫，尾帧=站立的猫\n描述=cat slowly standing up",
+    "input_type": "photo",
+    "backend": "comfyui"
+  },
+  "comfy": {
+    "label": "首尾帧生视频（Wan2.2）",
+    "is_img2img": true,
+    "output_type": "video",
+    "model_selectable": false,
+    "use_caption_as_prompt": true,
+    "prompt_node": "6",
+    "prompt_key": "text",
+    "seed_node": "57",
+    "seed_key": "noise_seed",
+    "load_image_nodes": {
+      "start": {
+        "node": "68",
+        "key": "image"
+      },
+      "end": {
+        "node": "62",
+        "key": "image"
+      }
+    },
+    "video_width_node": "67",
+    "video_width_key": "width",
+    "video_height_node": "67",
+    "video_height_key": "height",
+    "video_frames_node": "67",
+    "video_frames_key": "length",
+    "default_model": "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+    "workflow_file": "video_wan2_2_14B_flf2v.json"
+  },
+  "user_configurable": [
+    "comfy_seed",
+    "comfy_translate",
+    "comfy_prompt",
+    "comfy_video_aspect",
+    "comfy_video_resolution",
+    "comfy_video_frames"
+  ]
+}

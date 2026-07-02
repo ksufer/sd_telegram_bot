@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "key": "z-image-turbo",
+  "enabled": true,
+  "menu": {
+    "emoji": "🖼",
+    "label": "文生图",
+    "description": "输入文字描述，AI 生成图片",
+    "how_to": "直接发送描述词即可\n例如：a cat sitting on a sofa, masterpiece, best quality\n\n可选：在 ComfyUI 设置中自定义 Prompt，固定描述风格",
+    "input_type": "text",
+    "backend": "comfyui"
+  },
+  "comfy": {
+    "label": "Z-Image-Turbo（文生图）",
+    "is_img2img": false,
+    "prompt_node": "83:27",
+    "prompt_key": "text",
+    "seed_node": "83:3",
+    "seed_key": "seed",
+    "model_node": "83:28",
+    "model_key": "unet_name",
+    "model_loader_class": "UNETLoader",
+    "width_node": "83:13",
+    "width_key": "width",
+    "height_node": "83:13",
+    "height_key": "height",
+    "default_model": "moodyPornMix_zitV9.safetensors",
+    "workflow_file": "zit-api.json"
+  },
+  "user_configurable": [
+    "comfy_seed",
+    "comfy_translate",
+    "comfy_prompt",
+    "comfy_model",
+    "comfy_width",
+    "comfy_height"
+  ]
+}

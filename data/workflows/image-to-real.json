@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "key": "image-to-real",
+  "enabled": true,
+  "menu": {
+    "emoji": "📸",
+    "label": "动漫转写实",
+    "description": "上传动漫图片，AI 转换为写实照片风格",
+    "how_to": "直接发送一张动漫/二次元图片即可\n无需提示词，AI 自动转换为写实照片\n发送图片时可附带文字补充细节（如发型、瞳色等）\n\n输出图片将保持原图比例",
+    "input_type": "photo",
+    "backend": "comfyui"
+  },
+  "comfy": {
+    "label": "Image-to-Real（动漫转写实）",
+    "is_img2img": true,
+    "use_caption_as_prompt": true,
+    "append_user_prompt": true,
+    "prompt_node": "17:8",
+    "prompt_key": "prompt",
+    "seed_node": "17:11",
+    "seed_key": "seed",
+    "model_node": "17:4",
+    "model_key": "unet_name",
+    "model_loader_class": "UNETLoader",
+    "load_image_node": "14",
+    "load_image_key": "image",
+    "default_model": "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+    "workflow_file": "templates-image_to_real.json"
+  },
+  "user_configurable": [
+    "comfy_seed",
+    "comfy_translate",
+    "comfy_prompt",
+    "comfy_model"
+  ]
+}

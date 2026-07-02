@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "key": "sdxl",
+  "enabled": true,
+  "menu": {
+    "emoji": "🎨",
+    "label": "文生图（SDXL）",
+    "description": "SDXL 模型文生图，高质量大图",
+    "how_to": "直接发送描述词即可\n例如：a cat sitting on a sofa\n\n提示词会自动添加画质前缀\n可在 ComfyUI 设置中切换模型和尺寸",
+    "input_type": "text",
+    "backend": "comfyui"
+  },
+  "comfy": {
+    "label": "SDXL（文生图）",
+    "is_img2img": false,
+    "prompt_node": [
+      "6",
+      "15"
+    ],
+    "prompt_key": "text",
+    "prompt_prefix": "masterpiece, best quality, ultra-detailed, very aesthetic, depth of field, best lighting, detailed illustration, detailed background, cinematic, ambient occlusion, raytracing, soft lighting, blum effect, ",
+    "seed_node": [
+      "10",
+      "11"
+    ],
+    "seed_key": "noise_seed",
+    "model_node": [
+      "4",
+      "12"
+    ],
+    "model_key": "ckpt_name",
+    "model_loader_class": "CheckpointLoaderSimple",
+    "width_node": "5",
+    "width_key": "width",
+    "height_node": "5",
+    "height_key": "height",
+    "default_model": "miaomiaoHarem_v20.safetensors",
+    "workflow_file": "sdxl.json"
+  },
+  "user_configurable": [
+    "comfy_seed",
+    "comfy_translate",
+    "comfy_prompt",
+    "comfy_model",
+    "comfy_width",
+    "comfy_height"
+  ]
+}

@@ -101,7 +101,7 @@
 | 层级 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|------|
 | 根 | `schema_version` | int | 是 | 固定为 1，用于未来格式迁移 |
-| 根 | `key` | str | 是 | 唯一标识，`[a-z0-9_-]+`，与文件名一致 |
+| 根 | `key` | str | 是 | 唯一标识，`[a-z0-9_-]+$`，与文件名一致 |
 | 根 | `enabled` | bool | 是 | `false` 时 Bot 跳过该工作流 |
 | menu | `emoji` | str | 否 | 菜单按钮图标 |
 | menu | `label` | str | 是 | 短名称 |
@@ -110,29 +110,36 @@
 | menu | `input_type` | str | 是 | `"text"` 或 `"photo"` |
 | menu | `backend` | str | 是 | 固定 `"comfyui"`（第一版） |
 | comfy | `label` | str | 否 | 设置页显示的工作流名称 |
-| comfy | `workflow_file` | str | 是 | ComfyUI workflow JSON 文件名（相对于 `data/comfy_workflows/`） |
+| comfy | `workflow_file` | str | 是 | ComfyUI workflow JSON **文件名**（不允许含 `/`、`\`、`..`） |
 | comfy | `is_img2img` | bool | 是 | 是否图生图模式 |
-| comfy | `prompt_node` | str/list | 是 | 提示词节点 ID |
+| comfy | `prompt_node` | str/list | 是 | 提示词节点 ID。若为 list，`prompt_key` 应用于所有节点 |
 | comfy | `prompt_key` | str | 是 | 提示词 inputs key |
-| comfy | `seed_node` | str/list | 是 | 种子节点 ID |
+| comfy | `seed_node` | str/list | 是 | 种子节点 ID。若为 list，`seed_key` 应用于所有节点 |
 | comfy | `seed_key` | str | 是 | 种子 inputs key |
 | comfy | `model_node` | str/list | 否 | 模型节点 ID |
 | comfy | `model_key` | str | 否 | 模型 inputs key |
 | comfy | `model_loader_class` | str | 否 | 节点 class_type（用于模型列表查询） |
-| comfy | `model_selectable` | bool | 否 | 是否允许用户切换模型（默认 true） |
+| comfy | `model_selectable` | bool | 否 | 是否允许用户切换模型（默认 true）。`true` 时 `model_node`/`model_key`/`model_loader_class` 必填 |
 | comfy | `width_node` | str | 否 | 宽度节点 ID |
+| comfy | `width_key` | str | 否 | 宽度 inputs key |
 | comfy | `height_node` | str | 否 | 高度节点 ID |
+| comfy | `height_key` | str | 否 | 高度 inputs key |
 | comfy | 其他节点字段 | str/list/dict | 否 | 如 `load_image_node`、`lora_node`、各类 switch 节点等 |
 | comfy | `default_model` | str | 否 | 默认模型名 |
 | 根 | `user_configurable` | []str | 是 | 用户可编辑的 settings key 列表 |
 
 ### 3.3 Bot 加载逻辑
 
-`config.py` 中新增动态加载函数：
+`config.py` 中新增动态加载函数。**关键语义：**
+
+- 目录不存在或没有任何 `.json` 文件 → 回退硬编码默认配置
+- 目录存在、有文件、但全部被禁用 → **返回空列表 + 打印 warning**（不回退默认）
+- 配置文件 `key` 与文件名不一致 → 跳过
+- `schema_version` 不为 1 → 跳过
 
 ```python
 def _load_workflows():
-    """从 data/workflows/ 加载所有配置。不存在时回退默认值。"""
+    """从 data/workflows/ 加载所有配置。"""
     import json
     from pathlib import Path
 
@@ -140,25 +147,48 @@ def _load_workflows():
     if not wf_dir.exists():
         return _DEFAULT_WORKFLOW_REGISTRY, _DEFAULT_COMFY_WORKFLOWS
 
+    files = sorted(wf_dir.glob("*.json"))
+    if not files:
+        return _DEFAULT_WORKFLOW_REGISTRY, _DEFAULT_COMFY_WORKFLOWS
+
     registry = []
     comfy_workflows = {}
-    for f in sorted(wf_dir.glob("*.json")):
+
+    for f in files:
         try:
-            with open(f) as fp:
+            with open(f, encoding="utf-8") as fp:
                 data = json.load(fp)
+
+            if data.get("schema_version") != 1:
+                logger.warning("跳过不支持的配置版本: %s", f.name)
+                continue
+
+            key = data["key"]
+            if f.stem != key:
+                logger.warning("跳过 key 与文件名不一致的配置: %s", f.name)
+                continue
+
+            if not data.get("enabled", True):
+                continue
+
+            menu = data.get("menu", {})
+            registry.append({
+                "key": key,
+                **menu,
+            })
+
+            if data.get("comfy"):
+                # 复制而非原地修改，避免影响原始 dict
+                comfy = {
+                    **data["comfy"],
+                    "user_configurable": data.get("user_configurable", []),
+                }
+                comfy_workflows[key] = comfy
+
         except Exception:
-            logger.warning("跳过无效配置: %s", f.name)
+            logger.warning("跳过无效配置: %s", f.name, exc_info=True)
             continue
-        if not data.get("enabled", True):
-            continue
-        registry.append({
-            "key": data["key"],
-            **data.get("menu", {}),
-        })
-        if data.get("comfy"):
-            cfg = data["comfy"]
-            cfg["user_configurable"] = data.get("user_configurable", [])
-            comfy_workflows[data["key"]] = cfg
+
     return registry, comfy_workflows
 ```
 
@@ -171,12 +201,19 @@ def _load_workflows():
 ```python
 uc = wf_config.get("user_configurable", [])
 
-# 尺寸
-if {"comfy_width", "comfy_height"}.issubset(uc) and wf_config.get("width_node"):
+# 尺寸：同时检查 node 和 key
+if (
+    {"comfy_width", "comfy_height"}.issubset(uc)
+    and wf_config.get("width_node") and wf_config.get("width_key")
+    and wf_config.get("height_node") and wf_config.get("height_key")
+):
     show_size_button()
 
 # 视频参数
-if "output_type" == "video" and {"comfy_video_aspect", "comfy_video_resolution"}.issubset(uc):
+if (
+    wf_config.get("output_type") == "video"
+    and {"comfy_video_aspect", "comfy_video_resolution", "comfy_video_frames"}.issubset(uc)
+):
     show_video_buttons()
 
 # 三级开关
@@ -190,9 +227,31 @@ if "comfy_facedetailer_enabled" in uc and wf_config.get("facedetailer_switch_nod
 # LoRA 变体
 if "comfy_lora_variant" in uc and wf_config.get("lora_node"):
     show_lora_variant()
+
+# 模型切换：model_selectable=true + 必须字段齐全
+if (
+    "comfy_model" in uc
+    and wf_config.get("model_selectable", True)
+    and wf_config.get("model_node")
+    and wf_config.get("model_key")
+):
+    show_model_button()
 ```
 
 **规则：一个设置项只有在管理员勾选且工作流实际支持时，才在用户菜单中显示。**
+
+### 3.5 `*_node` 为 list 时的校验规则
+
+若 `*_node` 字段为 list，则对应的 `*_key` 必须为 str，并应用于 list 中所有节点：
+
+```python
+nodes = value if isinstance(value, list) else [value]
+for node_id in nodes:
+    check node_id exists in workflow JSON
+    check key exists in node.inputs
+```
+
+第一版不支持每个节点有不同的 key。未来如需支持再扩展 schema。
 
 ## 4. Web 管理页
 
@@ -200,15 +259,16 @@ if "comfy_lora_variant" in uc and wf_config.get("lora_node"):
 
 ```
 admin/
-├── app.py                  # Flask 路由 + 登录中间件
-├── workflow_store.py       # 读写 workflow 配置，原子写入
-├── validators.py           # 校验节点 ID / inputs key
+├── __init__.py              # 空文件，使 admin 可作为包导入
+├── app.py                   # Flask 路由 + 登录中间件
+├── workflow_store.py        # 读写 workflow 配置，原子写入
+├── validators.py            # 校验节点 ID / inputs key / class_type
 ├── templates/
-│   ├── base.html           # 公共布局
-│   ├── login.html          # 登录页
-│   ├── list.html           # 工作流列表
-│   ├── detail.html         # 详情页（含校验报告）
-│   └── form.html           # 新建/编辑表单
+│   ├── base.html            # 公共布局
+│   ├── login.html           # 登录页
+│   ├── list.html            # 工作流列表
+│   ├── detail.html          # 详情页（含校验报告 + JSON 预览）
+│   └── form.html            # 新建/编辑表单
 └── static/
     └── style.css
 ```
@@ -222,9 +282,12 @@ admin/
 | `/` | GET | 工作流列表 |
 | `/new` | GET/POST | 新建工作流 |
 | `/edit/<key>` | GET/POST | 编辑工作流 |
-| `/detail/<key>` | GET | 查看详情 + 校验报告 |
-| `/delete/<key>` | POST | 禁用工作流（移至 `.trash/`） |
-| `/api/validate-workflow` | POST | 上传 ComfyUI workflow JSON 并返回节点校验结果 |
+| `/detail/<key>` | GET | 查看详情 + 校验报告 + JSON 预览 |
+| `/disable/<key>` | POST | 设置 `"enabled": false`（软禁用，文件留在原处） |
+| `/enable/<key>` | POST | 设置 `"enabled": true` |
+| `/archive/<key>` | POST | 归档至 `.trash/`（确认后移动文件） |
+| `/api/upload-comfy-workflow` | POST | 上传原始 ComfyUI workflow JSON 到 `data/comfy_workflows/` |
+| `/api/validate-mapping` | POST | 根据已上传的 workflow_file 和表单字段校验节点映射 |
 
 ### 4.3 校验规则
 
@@ -232,16 +295,33 @@ admin/
 - key 格式 `^[a-z0-9_-]+$`，不能与已有 key 重复
 - menu.label、menu.description、menu.how_to 非空
 - menu.input_type 必须是 `text` 或 `photo`
-- comfy.workflow_file 非空，且对应文件在 `data/comfy_workflows/` 下存在
+- comfy.workflow_file 非空，且只能为纯文件名（不允许 `/`、`\`、`..`）
+- comfy.workflow_file 对应文件在 `data/comfy_workflows/` 下必须存在
+- `model_selectable=true` 时，`model_node`、`model_key`、`model_loader_class` 三者必填
+
+**workflow_file 路径安全校验：**
+
+```python
+from pathlib import Path
+
+def validate_workflow_file(name: str) -> None:
+    p = Path(name)
+    if p.name != name or ".." in p.parts:
+        raise ValueError("workflow_file 只能填写文件名，不允许路径")
+```
 
 **结构校验（workflow JSON 文件级）：**
 - 文件是合法 JSON
 - 顶层是 dict（`{ "node_id": { "class_type": "...", "inputs": {...} } }`）
 
 **节点校验（填写值与实际 workflow 匹配）：**
-- 每个已填写的 `*_node` 值必须在 workflow JSON 的顶层 key 中存在
-- 每个对应的 `*_key` 值必须在对应节点的 `inputs` 中存在
-- `model_loader_class` 必须与对应节点的 `class_type` 一致
+
+| 校验项 | 规则 |
+|--------|------|
+| `*_node` 存在 | 所有已填写的 `*_node` 值（展开 list）必须在 workflow JSON 的顶层 key 中存在 |
+| `*_key` 存在 | 每个 `*_key` 必须在对应节点的 `inputs` 中存在 |
+| `model_loader_class` 匹配 | 必须与 model 节点的 `class_type` 一致 |
+| `load_image_nodes` 特殊校验 | 如果为 dict（`{"role": {"node": "...", "key": "..."}}`），逐个检验 node 和 key |
 
 ### 4.4 原子写入
 
@@ -259,7 +339,15 @@ def save_workflow(data: dict) -> None:
     tmp.replace(path)
 
 def disable_workflow(key: str) -> None:
-    """移至 .trash/ 而非直接删除。"""
+    """设置 enabled=false，文件留在原处。"""
+    path = Path("data/workflows") / f"{key}.json"
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    data["enabled"] = False
+    save_workflow(data)
+
+def archive_workflow(key: str) -> None:
+    """移至 .trash/ 目录。"""
     src = Path("data/workflows") / f"{key}.json"
     trash = Path("data/workflows/.trash")
     trash.mkdir(exist_ok=True)
@@ -269,8 +357,17 @@ def disable_workflow(key: str) -> None:
 ### 4.5 认证
 
 - `ADMIN_PASSWORD` 和 `FLASK_SECRET_KEY` 从 `.env` 读取
+- 启动时检查二者非空，为空则拒绝启动
 - 登录后使用 Flask session 保持状态
 - 所有页面路由通过 `@login_required` 装饰器保护
+- Session cookie 安全配置：
+
+```python
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+)
+```
 
 ## 5. Docker 配置
 
@@ -295,11 +392,17 @@ sd-admin:
 
 ```dockerfile
 FROM python:3.12-slim
+
 WORKDIR /app
 RUN pip install uv
+
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --extra admin
+RUN uv sync --frozen --extra admin --no-dev
+
 COPY . .
+
+ENV PYTHONPATH=/app
+
 CMD ["uv", "run", "python", "-m", "admin.app"]
 ```
 
@@ -310,22 +413,35 @@ CMD ["uv", "run", "python", "-m", "admin.app"]
 admin = ["flask"]
 ```
 
+### 5.4 需要确认
+
+- `admin/` 下需创建 `__init__.py`（空文件）
+- `pyproject.toml` 需包含基本打包配置（`[project] name` 等）使 `uv sync` 能识别本项目
+
 ## 6. 迁移脚本
 
 提供一个一次性脚本，将现有硬编码配置导出为 JSON 文件：
 
 ```bash
-uv run python -m scripts.export_workflows
+uv run python -m scripts.export_workflows --dry-run
+uv run python -m scripts.export_workflows --write
 ```
 
-输出目录：`data/workflows/`，每个现有工作流一个 JSON 文件。同时将对应的 ComfyUI workflow JSON 从 `data/` 移到 `data/comfy_workflows/`。
+### 行为
+
+| 模式 | 行为 |
+|------|------|
+| `--dry-run` | 打印每个工作流将生成的 JSON 内容，不做任何写入 |
+| `--write` | 将配置导出为 `data/workflows/{key}.json`，**复制** ComfyUI workflow JSON 到 `data/comfy_workflows/`（不移动原文件） |
+
+**原则：迁移脚本只新增文件，不删除或移动任何旧文件。** 旧文件清理在验证通过后单独操作。
 
 ## 7. 实施阶段
 
 | 阶段 | 内容 | 验收标准 |
 |------|------|---------|
-| **1** | 配置文件化 | Bot 从 `data/workflows/*.json` 加载，正常生成，不存在的目录回退默认值 |
-| **2** | 只读管理页 | 列表 + 详情页 + 节点校验报告，无需重启 Bot |
-| **3** | 编辑管理页 | 新建/编辑/禁用/表单校验/原子写入，改完重启 Bot 生效 |
+| **1** | 配置文件化 | Bot 从 `data/workflows/*.json` 加载；目录不存在/为空时回退默认值；全部禁用时返回空列表 |
+| **2** | 只读管理页 | 列表 + 详情页 + 节点校验报告 + JSON 预览；启动时检查 `ADMIN_PASSWORD`/`FLASK_SECRET_KEY` |
+| **3** | 编辑管理页 | 新建/编辑/软禁用/归档 + 表单校验 + 原子写入；改完重启 Bot 生效 |
 | **4** | 菜单双重判断 | `user_configurable` + 节点能力共同控制菜单显示 |
 | **5** | 热加载（可选） | `services/workflow_config.py` + `/reload` 命令 |

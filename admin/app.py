@@ -105,5 +105,33 @@ def _load_all_workflows() -> list[dict]:
     return result
 
 
+@app.route("/detail/<key>")
+@login_required
+def detail_workflow(key: str):
+    path = WORKFLOW_DIR / f"{key}.json"
+    if not path.exists():
+        return "工作流不存在", 404
+
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+
+    raw_json = json.dumps(data, ensure_ascii=False, indent=2)
+
+    from admin.validators import validate_workflow_file, validate_nodes
+
+    file_error = None
+    node_report = []
+    if data.get("comfy"):
+        wf_name = data["comfy"].get("workflow_file", "")
+        if wf_name:
+            file_error = validate_workflow_file(wf_name)
+            if file_error is None:
+                node_report = validate_nodes(data["comfy"])
+
+    return render_template("detail.html",
+                           wf=data, raw_json=raw_json,
+                           file_error=file_error, node_report=node_report)
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080, debug=False)

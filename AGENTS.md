@@ -33,17 +33,32 @@ uv add <package>        # 添加依赖
 - 翻译失败时静默降级为原文，不阻断生成。
 - 生成队列为全局串行，新任务自动排队。
 
-## Docker 注意事项
+## Docker 启动
 
-- `network_mode: host` — 容器直接访问宿主机网络（ComfyUI、代理等）。
+多平台 Compose 覆盖文件，启动方式：
+
+```bash
+./start.sh          # Linux（network_mode: host，代理指向 10.126.126.1:10808）
+start.bat           # Windows 双击（桥接网络，代理指向 host.docker.internal:10808）
+```
+
+结构说明：
+- `docker-compose.yml` — 通用配置（build、volumes、env_file），不含平台相关项
+- `docker-compose.linux.yml` — `network_mode: host`
+- `docker-compose.windows.yml` — `extra_hosts` + 覆盖 `PROXY_URL`/`COMFY_API_BASE` 为 `host.docker.internal`
+
+注意事项：
 - `COPY . .` 有 layer cache，新增文件未生效时需 `--no-cache` rebuild。
-- `.env` 不进入镜像，通过 `env_file` 注入。
+- `.env` 不进入镜像，通过 `env_file` 注入，Linux/Windows 共享同一个 `.env`。
 - data/ 和 logs/ 通过 volume 挂载持久化。
-- 推送命令：`rsync` 排除 `.git`、`.venv`、`__pycache__` 等，目标 `homelab:/home/ksufer/homelab/stacks/sd-telegram-bot/`。
+- `network_mode: host` Windows Docker Desktop 不支持，因此必须使用覆盖文件。
+- Windows 上 ComfyUI 需监听 `0.0.0.0:8188`（`--listen 0.0.0.0`）或已有端口映射，否则容器无法通过 `host.docker.internal` 访问。
 
 ## 代理
 
-中国大陆网络环境必须配置 `PROXY_URL`（socks5/http），否则无法连接 Telegram API。容器内代理指向宿主机 `socks5://10.126.126.1:10808`。
+中国大陆网络环境必须配置 `PROXY_URL`（socks5/http），否则无法连接 Telegram API。
+- Linux：`socks5://10.126.126.1:10808`
+- Windows：`socks5://host.docker.internal:10808`
 
 ## 修改代码时
 

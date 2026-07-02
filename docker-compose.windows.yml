@@ -1,0 +1,7 @@
+services:
+  sd-bot:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      PROXY_URL: socks5://host.docker.internal:10808
+      COMFY_API_BASE: http://host.docker.internal:8188

@@ -1,0 +1,3 @@
+services:
+  sd-bot:
+    network_mode: host

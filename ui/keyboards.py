@@ -85,18 +85,24 @@ def comfy_generation_menu(
             return InlineKeyboardMarkup(rows)
 
         if wf_config.get("lora_enable_node"):
-            # krea2: LoRA 开关 + 脸部精修开关
+            # krea2: 放大 + 优化 + 脸部精修 + LoRA 开关
             rows = []
             toggle_row = []
+            if wf_config.get("upscale_switch_node"):
+                upscale_on = settings.get("comfy_upscale_enabled", True)
+                toggle_row.append(InlineKeyboardButton(
+                    "🔍" if upscale_on else "🔍✖", callback_data="comfy_upscale_toggle_gen"))
+            if wf_config.get("prompt_optimize_node"):
+                opt_on = settings.get("comfy_prompt_optimize", True)
+                toggle_row.append(InlineKeyboardButton(
+                    "🤖" if opt_on else "🤖✖", callback_data="comfy_prompt_optimize_toggle_gen"))
             if wf_config.get("facedetailer_switch_node"):
                 facedetailer_on = settings.get("comfy_facedetailer_enabled", True)
-                label = "👤" if facedetailer_on else "👤✖"
                 toggle_row.append(InlineKeyboardButton(
-                    label, callback_data="comfy_facedetailer_toggle_gen"))
+                    "👤" if facedetailer_on else "👤✖", callback_data="comfy_facedetailer_toggle_gen"))
             lora_on = settings.get("comfy_krea2_lora_enabled", False)
-            lora_label = "🧬" if lora_on else "🧬✖"
             toggle_row.append(InlineKeyboardButton(
-                lora_label, callback_data="comfy_krea2_lora_toggle_gen"))
+                "🧬" if lora_on else "🧬✖", callback_data="comfy_krea2_lora_toggle_gen"))
             if toggle_row:
                 rows.append(toggle_row)
             if include_seed_buttons:

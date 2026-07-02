@@ -226,36 +226,44 @@ _DEFAULT_COMFY_WORKFLOWS = {
         "sd_upscale_prompt_key": "text",
     },
     "krea2": {
-        "label": "Krea2 人像（文生图+LoRA+脸部精修）",
-        "path": "data/krea2-zitface.json",
+        "label": "Krea2 人像（文生图+LoRA+脸部精修+放大+优化）",
         "is_img2img": False,
         "model_selectable": True,
-        "prompt_node": "52:19",
+        "prompt_node": "90",
         "prompt_key": "value",
-        "seed_node": "52:3",
+        "seed_node": "75",
         "seed_key": "seed",
-        "model_node": "52:10",
+        "model_node": "85",
         "model_key": "unet_name",
         "model_loader_class": "UNETLoader",
-        "width_node": "52:5",
+        "width_node": "74",
         "width_key": "width",
-        "height_node": "52:5",
+        "height_node": "74",
         "height_key": "height",
         "default_model": "moodyKrea2Mix_v20OrientalEdition.safetensors",
         # LoRA
-        "lora_enable_node": "52:23",
+        "lora_enable_node": "81",
         "lora_enable_key": "value",
-        "lora_strength_node": "52:15",
+        "lora_strength_node": "78",
         "lora_strength_key": "strength_model",
+        # Upscale 开关
+        "upscale_switch_node": "57",
+        "upscale_switch_key": "image",
+        "upscale_switch_on": ["66", 0],
+        "upscale_switch_off": ["76", 0],
         # FaceDetailer
         "facedetailer_switch_node": "64",
         "facedetailer_switch_key": "images",
         "facedetailer_switch_on": ["57", 0],
-        "facedetailer_switch_off": ["52:8", 0],
+        "facedetailer_switch_off": ["66", 0],
+        "facedetailer_switch_off_no_upscale": ["76", 0],
+        "prompt_optimize_node": "82",
+        "prompt_optimize_key": "value",
         "face_detailer_prompt_node": "60",
         "face_detailer_prompt_key": "text",
         "facedetailer_seed_node": "62",
         "facedetailer_seed_key": "seed",
+        "workflow_file": "krea2-up-zitface.json",
     },
     "image-to-real": {
         "label": "Image-to-Real（动漫转写实）",
@@ -402,6 +410,8 @@ def _infer_user_configurable(comfy: dict) -> list[str]:
         items.append("comfy_face_prompt")
     if comfy.get("lora_enable_node"):
         items.extend(["comfy_krea2_lora_enabled", "comfy_krea2_lora_strength"])
+    if comfy.get("prompt_optimize_node"):
+        items.append("comfy_prompt_optimize")
     return items
 
 for key, cfg in _DEFAULT_COMFY_WORKFLOWS.items():

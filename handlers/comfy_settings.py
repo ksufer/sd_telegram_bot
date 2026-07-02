@@ -127,6 +127,12 @@ def _add_middle_rows(keyboard: list, info_lines: list,
         label = "👤" if facedetailer_on else "👤✖"
         toggle_row.append(InlineKeyboardButton(label, callback_data="comfy_facedetailer_toggle"))
         toggle_text_parts.append(f"脸部={'ON' if facedetailer_on else 'OFF'}")
+    # 提示词优化开关
+    if wf_config.get("prompt_optimize_node") and "comfy_prompt_optimize" in uc:
+        opt_on = settings.get("comfy_prompt_optimize", True)
+        label = "🤖" if opt_on else "🤖✖"
+        toggle_row.append(InlineKeyboardButton(label, callback_data="comfy_prompt_optimize_toggle"))
+        toggle_text_parts.append(f"优化={'ON' if opt_on else 'OFF'}")
     if toggle_row:
         info_lines.append(" | ".join(toggle_text_parts))
         keyboard.append(toggle_row)
@@ -809,6 +815,11 @@ def get_handlers() -> list:
                              pattern=r"^comfy_krea2_lora_toggle$"),
         CallbackQueryHandler(auth_callback(_make_toggle_handler("comfy_krea2_lora_enabled", False, "Krea2 LoRA", fast=True)),
                              pattern=r"^comfy_krea2_lora_toggle_gen$"),
+        # 提示词优化开关
+        CallbackQueryHandler(auth_callback(_make_toggle_handler("comfy_prompt_optimize", True, "提示词优化")),
+                             pattern=r"^comfy_prompt_optimize_toggle$"),
+        CallbackQueryHandler(auth_callback(_make_toggle_handler("comfy_prompt_optimize", True, "提示词优化", fast=True)),
+                             pattern=r"^comfy_prompt_optimize_toggle_gen$"),
         # 脸部提示词
         CallbackQueryHandler(auth_callback(start_comfy_face_prompt_input),
                              pattern=r"^comfy_face_prompt_set$"),

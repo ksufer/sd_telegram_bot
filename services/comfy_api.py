@@ -205,9 +205,15 @@ def _apply_switches(workflow: dict, wf_config: dict, settings: dict) -> None:
     if "facedetailer_switch_node" in wf_config:
         facedetailer_on = settings.get("comfy_facedetailer_enabled", True)
         if "facedetailer_switch_on" in wf_config:
+            off_target = wf_config["facedetailer_switch_off"]
+            if (not facedetailer_on
+                    and "facedetailer_switch_off_no_upscale" in wf_config):
+                upscale_on = settings.get("comfy_upscale_enabled", True)
+                if not upscale_on:
+                    off_target = wf_config["facedetailer_switch_off_no_upscale"]
             save_source = (
                 wf_config["facedetailer_switch_on"] if facedetailer_on
-                else wf_config["facedetailer_switch_off"]
+                else off_target
             )
         else:
             save_source = (
@@ -244,6 +250,14 @@ def _apply_lora(workflow: dict, wf_config: dict, settings: dict,
         strength = max(-15, min(10, settings.get("comfy_krea2_lora_strength", 5)))
         _set_node_input(workflow, wf_config["lora_strength_node"],
                         wf_config["lora_strength_key"], strength)
+
+
+def _apply_prompt_optimize(workflow: dict, wf_config: dict, settings: dict) -> None:
+    """注入提示词优化开关（Refine Prompt? Boolean 节点）。"""
+    if "prompt_optimize_node" in wf_config:
+        enabled = settings.get("comfy_prompt_optimize", True)
+        _set_node_input(workflow, wf_config["prompt_optimize_node"],
+                        wf_config["prompt_optimize_key"], enabled)
 
 
 def _apply_face_prompt(workflow: dict, wf_config: dict, face_prompt: str | None,
@@ -298,6 +312,7 @@ def _build_payload(workflow: dict, prompt: str, seed: int, settings: dict,
     _apply_images(workflow, wf, uploaded_image, uploaded_images)
     _apply_switches(workflow, wf, settings)
     _apply_lora(workflow, wf, settings, full_prompt)
+    _apply_prompt_optimize(workflow, wf, settings)
     _apply_face_prompt(workflow, wf, face_prompt, settings)
     _apply_upscale_prompts(workflow, wf, full_prompt, prompt, settings, face_prompt)
 

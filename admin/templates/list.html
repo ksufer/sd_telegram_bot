@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}工作流列表{% endblock %}
+{% block content %}
+<h2>工作流配置</h2>
+<table style="margin-top:10px;">
+    <thead>
+        <tr>
+            <th>Key</th>
+            <th>菜单名称</th>
+            <th>类型</th>
+            <th>状态</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for wf in workflows %}
+        <tr>
+            <td><code>{{ wf.key }}</code></td>
+            <td>{{ wf.menu.label if wf.menu else "?" }}</td>
+            <td>{{ wf.menu.input_type if wf.menu else "?" }}</td>
+            <td>
+                {% if wf.enabled %}
+                <span class="badge badge-on">启用</span>
+                {% else %}
+                <span class="badge badge-off">禁用</span>
+                {% endif %}
+            </td>
+            <td>
+                <a href="/detail/{{ wf.key }}" class="btn btn-primary">详情</a>
+                <a href="/edit/{{ wf.key }}" class="btn btn-warning">编辑</a>
+                <form method="POST" action="/disable/{{ wf.key }}" style="display:inline">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-danger" style="font-size:14px;">禁用</button>
+                </form>
+            </td>
+        </tr>
+    {% endfor %}
+    {% if not workflows %}
+        <tr><td colspan="5" style="text-align:center; padding:30px;">暂无工作流配置</td></tr>
+    {% endif %}
+    </tbody>
+</table>
+{% endblock %}

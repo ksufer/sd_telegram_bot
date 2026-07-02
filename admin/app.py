@@ -269,5 +269,103 @@ def archive_handler(key: str):
     return redirect(url_for("list_workflows"))
 
 
+@app.route("/api/upload-comfy-workflow", methods=["POST"])
+@login_required
+def api_upload_comfy_workflow():
+    """上传原始 ComfyUI workflow JSON 到 data/comfy_workflows/。"""
+    import re
+
+    file = request.files.get("file")
+    if not file:
+        return {"error": "未选择文件"}, 400
+
+    raw_name = file.filename or ""
+    if "/" in raw_name or "\\" in raw_name or ".." in raw_name:
+        return {"error": "文件名不允许路径"}, 400
+
+    filename_str = Path(raw_name).name
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+\.json", filename_str):
+        return {"error": "文件名只能包含字母、数字、点、短横线、下划线，并以 .json 结尾"}, 400
+
+    try:
+        data = json.load(file)
+    except json.JSONDecodeError as e:
+        return {"error": f"JSON 无效: {e}"}, 400
+
+    if not isinstance(data, dict):
+        return {"error": "workflow JSON 顶层必须是 dict"}, 400
+
+    dest_dir = COMFY_WORKFLOW_DIR
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / filename_str
+    tmp = dest.with_suffix(".json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    tmp.replace(dest)
+
+    node_count = len(data)
+    return {"ok": True, "filename": filename_str, "nodes": node_count}
+
+
+@app.route("/api/validate-mapping", methods=["POST"])
+@login_required
+def api_validate_mapping():
+    """根据表单提交的节点映射校验 workflow JSON。"""
+    from admin.validators import validate_workflow_file, validate_nodes
+
+    wf_file = request.form.get("workflow_file", "").strip()
+    if not wf_file:
+        return {"error": "workflow_file 不能为空"}, 400
+
+    file_error = validate_workflow_file(wf_file)
+    if file_error:
+        return {"error": file_error}, 400
+
+    ALLOWED_COMFY_FIELDS = {
+        "label", "is_img2img", "output_type", "model_selectable",
+        "prompt_node", "prompt_key",
+        "seed_node", "seed_key",
+        "model_node", "model_key", "model_loader_class",
+        "width_node", "width_key", "height_node", "height_key",
+        "video_width_node", "video_width_key", "video_height_node",
+        "video_height_key", "video_frames_node", "video_frames_key",
+        "load_image_node", "load_image_key",
+        "upscale_switch_node", "upscale_switch_key",
+        "upscale_switch_on", "upscale_switch_off",
+        "pussydetailer_switch_node", "pussydetailer_switch_key",
+        "facedetailer_switch_node", "facedetailer_switch_key",
+        "facedetailer_switch_on", "facedetailer_switch_off",
+        "sd_upscale_node", "sd_upscale_seed_key",
+        "sd_upscale_prompt_node", "sd_upscale_prompt_key",
+        "lora_node", "lora_enable_node", "lora_enable_key",
+        "lora_strength_node", "lora_strength_key",
+        "detailer_prompt_node", "detailer_prompt_key",
+        "face_detailer_prompt_node", "face_detailer_prompt_key",
+        "facedetailer_seed_node", "facedetailer_seed_key",
+        "default_model",
+    }
+
+    comfy = {
+        k: v.strip()
+        for k, v in request.form.items()
+        if k in ALLOWED_COMFY_FIELDS and isinstance(v, str) and v.strip()
+    }
+
+    JSON_FIELDS = {"load_image_nodes", "upscale_switch_on", "upscale_switch_off",
+                   "facedetailer_switch_on", "facedetailer_switch_off"}
+    for k, v in list(comfy.items()):
+        if k in JSON_FIELDS and isinstance(v, str) and v.strip():
+            try:
+                comfy[k] = json.loads(v)
+            except json.JSONDecodeError:
+                pass
+
+    comfy["workflow_file"] = wf_file
+
+    report = validate_nodes(comfy)
+    errors = [r for r in report if r["status"] == "error"]
+    return {"ok": True, "report": report, "error_count": len(errors)}
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080, debug=False)

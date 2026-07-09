@@ -10,6 +10,7 @@ from config import (
     COMFY_WORKFLOWS,
     COMFY_DEFAULT_WORKFLOW,
     COMFY_LORA_VARIANTS,
+    COMFY_PROMPT_OPTIMIZE_MODES,
 )
 
 
@@ -93,9 +94,13 @@ def comfy_generation_menu(
                 toggle_row.append(InlineKeyboardButton(
                     "🔍" if upscale_on else "🔍✖", callback_data="comfy_upscale_toggle_gen"))
             if wf_config.get("prompt_optimize_node"):
-                opt_on = settings.get("comfy_prompt_optimize", True)
+                mode = settings.get("comfy_prompt_optimize", "nsfw")
+                if isinstance(mode, bool):
+                    mode = "nsfw" if mode else "off"
+                mode_cfg = COMFY_PROMPT_OPTIMIZE_MODES.get(
+                    mode, COMFY_PROMPT_OPTIMIZE_MODES["nsfw"])
                 toggle_row.append(InlineKeyboardButton(
-                    "🤖" if opt_on else "🤖✖", callback_data="comfy_prompt_optimize_toggle_gen"))
+                    mode_cfg["icon"], callback_data="comfy_prompt_optimize_cycle_gen"))
             if wf_config.get("facedetailer_switch_node"):
                 facedetailer_on = settings.get("comfy_facedetailer_enabled", True)
                 toggle_row.append(InlineKeyboardButton(

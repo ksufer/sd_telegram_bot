@@ -160,7 +160,7 @@ class GenerationQueue:
 
     async def _generate(self, task: GenerationTask, translated: str,
                        updater: ThrottledProgressUpdater) -> tuple:
-        """执行生成（SD/ComfyUI 两条路径）。返回 (raw_data, actual_seed, wf_config)。"""
+        """执行生成（SD/ComfyUI 两条路径）。返回 (raw_data, actual_seed, wf_config, optimized_prompt)。"""
         settings = task.settings
         backend = settings.get("backend", "sd")
 
@@ -189,7 +189,7 @@ class GenerationQueue:
 
             if last_progress_task and not last_progress_task.done():
                 last_progress_task.cancel()
-            return image_data, actual_seed, {}
+            return image_data, actual_seed, {}, None
 
         # ComfyUI 路径
         await updater.set_stage("正在生成（ComfyUI）...")
@@ -210,13 +210,13 @@ class GenerationQueue:
                 await updater.set_stage("正在提取脸部提示词...")
                 face_prompt = await extract_face_prompt(task.prompt)
 
-        comfy_output, actual_seed = await comfy_api.generate(
+        comfy_output, actual_seed, optimized_prompt = await comfy_api.generate(
             translated, settings, seed,
             uploaded_image=uploaded_image,
             uploaded_images=uploaded_images,
             face_prompt=face_prompt,
         )
-        return comfy_output, actual_seed, wf_config
+        return comfy_output, actual_seed, wf_config, optimized_prompt
 
     def _cache_gen_context(self, task: GenerationTask, translated: str,
                            actual_seed: int) -> str:
@@ -322,15 +322,18 @@ class GenerationQueue:
         # 翻译 + 生成（此阶段失败退款）
         try:
             translated = await self._translate_prompt(task, updater)
-            raw_data, actual_seed, wf_config = await self._generate(
+            raw_data, actual_seed, wf_config, optimized_prompt = await self._generate(
                 task, translated, updater)
         except Exception:
             if task.credit_charged:
                 await credits.refund_one(task.user_id)
             raise
 
+        # 优化提示词可用时，替代 translated 用于显示和缓存
+        display_prompt = optimized_prompt or translated
+
         # 缓存生成上下文
-        context_id = self._cache_gen_context(task, translated, actual_seed)
+        context_id = self._cache_gen_context(task, display_prompt, actual_seed)
 
         # 构建结果信息和菜单
         await updater.set_stage("正在发送...")
@@ -340,7 +343,7 @@ class GenerationQueue:
             info = _build_sd_info(settings, translated, actual_seed, elapsed)
             reply_markup = generation_menu(context_id)
         else:
-            info = _build_comfy_info(task, settings, translated, actual_seed, elapsed)
+            info = _build_comfy_info(task, settings, display_prompt, actual_seed, elapsed)
             reply_markup = comfy_generation_menu(context_id, settings=settings)
             if wf_config.get("output_type") != "video":
                 raw_data = raw_data.data  # 图片：提取 bytes；视频：保留 ComfyOutput 供 _send_result 取 .filename

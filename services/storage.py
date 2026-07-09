@@ -39,6 +39,10 @@ def load(user_id: int, defaults: dict) -> dict:
             merged["comfy_video_resolution"] = "480p"
         # 不自动保存，等待下次用户主动修改设置时持久化
 
+    # 向后兼容：旧 comfy_prompt_optimize 布尔值 → 新三态字符串
+    if isinstance(merged.get("comfy_prompt_optimize"), bool):
+        merged["comfy_prompt_optimize"] = "nsfw" if merged["comfy_prompt_optimize"] else "off"
+
     return merged
 
 

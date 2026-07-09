@@ -2,6 +2,7 @@ import asyncio
 import copy
 import json
 import logging
+import random
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,7 @@ from config import (
     COMFY_TIMEOUT,
     COMFY_VIDEO_FRAMES_PRESETS,
     COMFY_LORA_VARIANTS,
+    COMFY_PROMPT_OPTIMIZE_MODES,
     NSFW_BODY_KEYWORDS,
     compute_video_dimensions,
 )
@@ -253,11 +255,30 @@ def _apply_lora(workflow: dict, wf_config: dict, settings: dict,
 
 
 def _apply_prompt_optimize(workflow: dict, wf_config: dict, settings: dict) -> None:
-    """注入提示词优化开关（Refine Prompt? Boolean 节点）。"""
+    """注入提示词优化三态（关闭/NSFW/SFW）。
+
+    - 节点 82（Refine Prompt? Boolean）：nsfw/sfw 时为 True，off 时 False。
+    - 节点 91（System Prompt）：按模式注入对应文本。
+    """
     if "prompt_optimize_node" in wf_config:
-        enabled = settings.get("comfy_prompt_optimize", True)
+        mode = settings.get("comfy_prompt_optimize", "nsfw")
+        if isinstance(mode, bool):
+            mode = "nsfw" if mode else "off"
+        mode_cfg = COMFY_PROMPT_OPTIMIZE_MODES.get(mode, COMFY_PROMPT_OPTIMIZE_MODES["nsfw"])
+        enabled = mode_cfg["system"] is not None
         _set_node_input(workflow, wf_config["prompt_optimize_node"],
                         wf_config["prompt_optimize_key"], enabled)
+        if enabled and "prompt_system_node" in wf_config:
+            _set_node_input(workflow, wf_config["prompt_system_node"],
+                            wf_config["prompt_system_key"], mode_cfg["system"])
+        # 优化开启时注入随机 seed，避免 ComfyUI 缓存导致 PreviewAny 输出缺失
+        if enabled and "prompt_optimize_seed_node" in wf_config:
+            seed_node = wf_config["prompt_optimize_seed_node"]
+            seed_key = wf_config["prompt_optimize_seed_key"]
+            try:
+                workflow[seed_node]["inputs"][seed_key] = random.randint(0, 2**32 - 1)
+            except KeyError:
+                pass
 
 
 def _apply_face_prompt(workflow: dict, wf_config: dict, face_prompt: str | None,
@@ -422,7 +443,7 @@ async def _submit_prompt(client: httpx.AsyncClient, workflow: dict) -> str:
 
 async def _poll_result(client: httpx.AsyncClient, prompt_id: str,
                      wf_config: dict | None = None,
-                     wf_key: str | None = None) -> ComfyOutput:
+                     wf_key: str | None = None) -> tuple[ComfyOutput, str | None]:
     deadline = time.monotonic() + COMFY_TIMEOUT
     output_node_classes = {"SaveImage", "SaveImageAdvanced", "Image Saver Simple", "SaveVideo", "VHS_VideoCombine"}
     while time.monotonic() < deadline:
@@ -441,6 +462,20 @@ async def _poll_result(client: httpx.AsyncClient, prompt_id: str,
 
         outputs = item.get("outputs", {})
         logger.info(f"ComfyUI outputs: {list(outputs.keys())}")
+
+        # 捕获优化后的提示词文本（PreviewAny 节点的 UI 输出）
+        optimized_prompt = None
+        if wf_config and "prompt_output_node" in wf_config:
+            prompt_nid = wf_config["prompt_output_node"]
+            node_out = outputs.get(prompt_nid, {})
+            for text_key in ("text", "string", "value"):
+                text_vals = node_out.get(text_key)
+                if text_vals and isinstance(text_vals, list) and len(text_vals) > 0:
+                    optimized_prompt = str(text_vals[0])
+                    logger.info("ComfyUI 捕获优化提示词 (node=%s): %s",
+                                prompt_nid, optimized_prompt[:80])
+                    break
+
         # 收集所有候选输出，优先返回 Save 类节点（避免取到 PreviewImage 中间结果）
         candidates = []
         for _node_id, node_output in outputs.items():
@@ -476,7 +511,7 @@ async def _poll_result(client: httpx.AsyncClient, prompt_id: str,
                 data=data,
                 filename=filename,
                 kind=_detect_output_kind(filename),
-            )
+            ), optimized_prompt
 
         await asyncio.sleep(COMFY_POLL_INTERVAL)
 
@@ -510,7 +545,7 @@ async def _download_image(
 async def generate(prompt: str, settings: dict, seed: int,
                    uploaded_image: str | None = None,
                    uploaded_images: dict[str, str] | None = None,
-                   face_prompt: str | None = None) -> tuple[ComfyOutput, int]:
+                   face_prompt: str | None = None) -> tuple[ComfyOutput, int, str | None]:
     wf_key = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
     wf_config = _get_wf_config(settings)
     workflow = _load_workflow(wf_key)
@@ -521,5 +556,5 @@ async def generate(prompt: str, settings: dict, seed: int,
     timeout = httpx.Timeout(connect=10, read=COMFY_TIMEOUT, write=30, pool=10)
     async with httpx.AsyncClient(base_url=COMFY_API_BASE, timeout=timeout) as client:
         prompt_id = await _submit_prompt(client, payload)
-        output = await _poll_result(client, prompt_id, wf_config, wf_key)
-    return output, seed
+        output, optimized_prompt = await _poll_result(client, prompt_id, wf_config, wf_key)
+    return output, seed, optimized_prompt

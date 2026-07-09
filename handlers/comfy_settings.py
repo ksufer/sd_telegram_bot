@@ -8,6 +8,7 @@ from telegram.ext import CallbackQueryHandler
 from config import COMFY_SIZE_PRESETS, COMFY_WORKFLOWS, COMFY_DEFAULT_WORKFLOW
 from config import COMFY_VIDEO_ASPECTS, COMFY_VIDEO_RESOLUTIONS, COMFY_VIDEO_FRAMES_PRESETS
 from config import COMFY_LORA_VARIANTS, compute_video_dimensions
+from config import COMFY_PROMPT_OPTIMIZE_MODES, COMFY_PROMPT_OPTIMIZE_CYCLE
 from handlers import auth_callback
 from handlers.settings import _ensure_settings, _save_settings
 from handlers.common import safe_answer, reply_menu, get_user_id
@@ -127,12 +128,12 @@ def _add_middle_rows(keyboard: list, info_lines: list,
         label = "👤" if facedetailer_on else "👤✖"
         toggle_row.append(InlineKeyboardButton(label, callback_data="comfy_facedetailer_toggle"))
         toggle_text_parts.append(f"脸部={'ON' if facedetailer_on else 'OFF'}")
-    # 提示词优化开关
+    # 提示词优化三态（关闭/NSFW/SFW）
     if wf_config.get("prompt_optimize_node") and "comfy_prompt_optimize" in uc:
-        opt_on = settings.get("comfy_prompt_optimize", True)
-        label = "🤖" if opt_on else "🤖✖"
-        toggle_row.append(InlineKeyboardButton(label, callback_data="comfy_prompt_optimize_toggle"))
-        toggle_text_parts.append(f"优化={'ON' if opt_on else 'OFF'}")
+        mode = _normalize_optimize_mode(settings.get("comfy_prompt_optimize", "nsfw"))
+        mode_cfg = COMFY_PROMPT_OPTIMIZE_MODES[mode]
+        toggle_row.append(InlineKeyboardButton(mode_cfg["icon"], callback_data="comfy_prompt_optimize_cycle"))
+        toggle_text_parts.append(f"优化={mode_cfg['label']}")
     if toggle_row:
         info_lines.append(" | ".join(toggle_text_parts))
         keyboard.append(toggle_row)
@@ -728,6 +729,33 @@ async def _update_gen_keyboard(query, settings):
 
 # ═══ Toggle 开关（通用工厂，生成 settings 菜单和 fast 两个版本） ═══
 
+def _normalize_optimize_mode(value) -> str:
+    """兼容旧布尔值，返回三态字符串（off/nsfw/sfw）。"""
+    if isinstance(value, bool):
+        return "nsfw" if value else "off"
+    return value if value in COMFY_PROMPT_OPTIMIZE_MODES else "nsfw"
+
+
+def _make_cycle_handler(fast: bool = False):
+    """提示词优化三态循环 handler：off → nsfw → sfw → off。"""
+    async def handler(update, context):
+        query = update.callback_query
+        user_id = get_user_id(update)
+        settings = _ensure_settings(context, user_id)
+        current = _normalize_optimize_mode(settings.get("comfy_prompt_optimize", "nsfw"))
+        idx = COMFY_PROMPT_OPTIMIZE_CYCLE.index(current)
+        nxt = COMFY_PROMPT_OPTIMIZE_CYCLE[(idx + 1) % len(COMFY_PROMPT_OPTIMIZE_CYCLE)]
+        settings["comfy_prompt_optimize"] = nxt
+        _save_settings(context, user_id)
+        await safe_answer(query, f"提示词优化 · {COMFY_PROMPT_OPTIMIZE_MODES[nxt]['label']}")
+        if fast:
+            await _update_gen_keyboard(query, settings)
+        else:
+            text, markup = _comfy_settings_menu(settings)
+            await reply_menu(query, text, markup)
+    return handler
+
+
 def _make_toggle_handler(key: str, default: bool, label: str, fast: bool = False):
     """生成 toggle handler，避免 8 个重复函数。fast=True 仅刷新键盘不发消息。"""
     async def handler(update, context):
@@ -815,11 +843,11 @@ def get_handlers() -> list:
                              pattern=r"^comfy_krea2_lora_toggle$"),
         CallbackQueryHandler(auth_callback(_make_toggle_handler("comfy_krea2_lora_enabled", False, "Krea2 LoRA", fast=True)),
                              pattern=r"^comfy_krea2_lora_toggle_gen$"),
-        # 提示词优化开关
-        CallbackQueryHandler(auth_callback(_make_toggle_handler("comfy_prompt_optimize", True, "提示词优化")),
-                             pattern=r"^comfy_prompt_optimize_toggle$"),
-        CallbackQueryHandler(auth_callback(_make_toggle_handler("comfy_prompt_optimize", True, "提示词优化", fast=True)),
-                             pattern=r"^comfy_prompt_optimize_toggle_gen$"),
+        # 提示词优化三态循环（off → nsfw → sfw）
+        CallbackQueryHandler(auth_callback(_make_cycle_handler()),
+                             pattern=r"^comfy_prompt_optimize_cycle$"),
+        CallbackQueryHandler(auth_callback(_make_cycle_handler(fast=True)),
+                             pattern=r"^comfy_prompt_optimize_cycle_gen$"),
         # 脸部提示词
         CallbackQueryHandler(auth_callback(start_comfy_face_prompt_input),
                              pattern=r"^comfy_face_prompt_set$"),

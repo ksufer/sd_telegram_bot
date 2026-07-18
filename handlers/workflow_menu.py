@@ -13,7 +13,7 @@ from config import (
     COMFY_VIDEO_FRAMES_PRESETS,
 )
 from handlers import auth_callback, _user_auth_filter
-from handlers.common import safe_answer, reply_menu, get_user_id
+from handlers.common import safe_answer, reply_menu, get_user_id, refresh_workflows
 from handlers.generation import _clear_firstlast_state
 from handlers.settings import (
     _ensure_settings,
@@ -95,6 +95,7 @@ def _build_main_menu() -> tuple[str, InlineKeyboardMarkup]:
 
 async def show_main_menu(update, context):
     """显示工作流导向主菜单（/start 和 /help 入口）。"""
+    refresh_workflows()
     text, markup = _build_main_menu()
     msg = update.effective_message
     if msg is None:

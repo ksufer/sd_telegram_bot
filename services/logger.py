@@ -29,3 +29,8 @@ def setup_logging(level: str = "INFO", log_dir: str = "logs") -> None:
     )
     file_handler.setFormatter(fmt)
     root.addHandler(file_handler)
+
+    # 第三方 HTTP 库降噪：INFO 级会记录完整请求 URL，
+    # 其中 Telegram API 的 URL 包含 bot token，必须避免写入日志
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)

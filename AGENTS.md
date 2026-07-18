@@ -20,13 +20,15 @@ uv add <package>        # 添加依赖
 - 工作流系统由 `config.py` 中 `WORKFLOW_REGISTRY` 驱动主菜单，每个工作流关联 ComfyUI workflow JSON。
 - 用户设置和额度数据持久化到 `data/user_settings/` 和 `data/credits/` 下的 JSON 文件（非内存）。
 - 多步交互（种子输入、Prompt 输入、首尾帧收集）通过 `context.user_data["_waiting_*"]` 标记实现。
-- 权限控制：`handlers/__init__.py` 提供 `is_authorized()`、`auth_callback` 装饰器、`_user_auth_filter()`。管理员无需在白名单中。
+- 权限控制：`handlers/__init__.py` 提供 `is_authorized()`、`auth_callback` 装饰器、`_user_auth_filter()`。管理员无需在白名单中（filter 层也会自动并入）。`ALLOWED_USER_IDS` / `ALLOWED_CHAT_IDS` / `ADMIN_USER_ID` 均可从 .env 读取（逗号分隔，留空不限制）。
+- 工作流配置热重载：`data/workflows/*.json` 变化时由 `config.maybe_reload_workflows()` 在消息/菜单入口自动原地重载；`comfy_api._load_workflow()` 缓存按文件 mtime 失效。管理面板改动无需重启 Bot。
+- 日志：`services/logger.py` 将 httpx/httpcore 降为 WARNING（INFO 级 URL 含 bot token，且轮询噪音大）。
 
 ### 新增模块
 
 | 模块 | 职责 |
 |------|------|
-| `handlers/common.py` | 共享工具函数（`safe_answer`、`reply_menu`、`get_user_id`） |
+| `handlers/common.py` | 共享工具函数（`safe_answer`、`reply_menu`、`get_user_id`、`refresh_workflows`） |
 | `ui/keyboards.py` | 无副作用键盘构建模块，纯函数返回 `InlineKeyboardMarkup` |
 
 ### 生成流程

@@ -8,25 +8,11 @@ from config import SIZE_PRESETS, DEFAULT_USER_SETTINGS
 from services import sd_api, storage
 from handlers import _user_auth_filter, auth_callback
 from handlers.common import safe_answer, reply_menu, get_user_id
-from ui.keyboards import generation_menu
 
 logger = logging.getLogger(__name__)
 
 
 # ═══ 键盘构建 ═══
-
-def _main_menu() -> tuple[str, InlineKeyboardMarkup]:
-    text = (
-        "<b>SD 绘图助手</b>\n"
-        "直接发送描述词即可生成图片。\n"
-        "使用下方菜单调整参数。"
-    )
-    keyboard = [
-        [InlineKeyboardButton("参数设置", callback_data="settings_menu")],
-        [InlineKeyboardButton("关闭菜单", callback_data="close_menu")],
-    ]
-    return text, InlineKeyboardMarkup(keyboard)
-
 
 def _settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
     size_label = f"{settings['width']} × {settings['height']}"
@@ -123,13 +109,14 @@ def _model_menu(settings: dict, models: list[dict]) -> tuple[str, InlineKeyboard
     text = f"<b> 选择模型</b>\n当前：<code>{current or '默认'}</code>"
 
     keyboard = []
-    for m in models:
+    for i, m in enumerate(models):
         name = m["model_name"]
         active = current == name
         prefix = "✓ " if active else ""
         display = name if len(name) <= 30 else name[:27] + "..."
+        # 用索引而非模型名，避免 callback_data 超 64 字节
         keyboard.append([InlineKeyboardButton(
-            f"{prefix}{display}", callback_data=f"pick_model_{name}"
+            f"{prefix}{display}", callback_data=f"pick_model_{i}"
         )])
     keyboard.append([InlineKeyboardButton("返回", callback_data="settings_back")])
     return text, InlineKeyboardMarkup(keyboard)
@@ -207,14 +194,6 @@ def _cfg_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
 
 # ═══ 回调处理 ═══
 
-async def show_main_menu(update, context):
-    text, markup = _main_menu()
-    msg = update.effective_message
-    if msg is None:
-        return
-    await msg.reply_text(text, reply_markup=markup, parse_mode="HTML")
-
-
 async def show_settings(update, context):
     query = update.callback_query
     await safe_answer(query)
@@ -259,13 +238,23 @@ async def show_model_menu(update, context):
             ]]),
         )
         return
+    # 暂存模型列表供 pick 按索引取用（避免 callback data 超长）
+    context.user_data["_sd_models"] = [m["model_name"] for m in models]
     text, markup = _model_menu(settings, models)
     await reply_menu(query, text, markup)
 
 
 async def pick_model(update, context):
     query = update.callback_query
-    model_name = query.data.replace("pick_model_", "")
+    names = context.user_data.get("_sd_models", [])
+    try:
+        idx = int(query.data.replace("pick_model_", ""))
+        if not 0 <= idx < len(names):
+            raise IndexError
+        model_name = names[idx]
+    except (ValueError, IndexError):
+        await safe_answer(query, "模型列表已过期，请重新打开模型菜单", show_alert=True)
+        return
     user_id = get_user_id(update)
     settings = _ensure_settings(context, user_id)
     settings["model"] = model_name

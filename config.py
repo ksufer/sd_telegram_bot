@@ -626,9 +626,28 @@ SAMPLER_PRESETS = [
 ]
 
 # ---- 访问控制 ----
-ALLOWED_USER_IDS: list[int] = []
-ALLOWED_CHAT_IDS: list[int] = []
-ADMIN_USER_ID: int | None = 7562421953
+def _parse_id_list(raw: str) -> list[int]:
+    """解析逗号分隔的 ID 列表，忽略无效项。"""
+    ids = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            ids.append(int(part))
+        except ValueError:
+            logger.warning("忽略无效的 ID 配置项: %s", part)
+    return ids
+
+
+ALLOWED_USER_IDS: list[int] = _parse_id_list(os.getenv("ALLOWED_USER_IDS", ""))
+ALLOWED_CHAT_IDS: list[int] = _parse_id_list(os.getenv("ALLOWED_CHAT_IDS", ""))
+_admin_id_env = os.getenv("ADMIN_USER_ID", "").strip()
+try:
+    ADMIN_USER_ID: int | None = int(_admin_id_env) if _admin_id_env else 7562421953
+except ValueError:
+    logger.warning("ADMIN_USER_ID 无效: %s，使用默认值", _admin_id_env)
+    ADMIN_USER_ID = 7562421953
 
 # ---- 额度系统 ----
 DEFAULT_CREDIT_QUOTA = 100
@@ -702,6 +721,41 @@ def _load_workflows():
 
 
 WORKFLOW_REGISTRY, COMFY_WORKFLOWS = _load_workflows()
+
+
+# ---- 工作流配置热重载（管理面板改动无需重启 Bot） ----
+def _workflows_dir_signature() -> tuple:
+    """data/workflows/ 下所有 JSON 的 (文件名, mtime) 签名，用于变化检测。"""
+    wf_dir = Path("data/workflows")
+    if not wf_dir.exists():
+        return ()
+    return tuple(
+        (f.name, f.stat().st_mtime_ns)
+        for f in sorted(wf_dir.glob("*.json"))
+    )
+
+
+_workflows_signature = _workflows_dir_signature()
+
+
+def maybe_reload_workflows() -> bool:
+    """data/workflows/ 配置变化时原地热重载 WORKFLOW_REGISTRY / COMFY_WORKFLOWS。
+
+    原地更新（clear + extend/update），保证各处 import 的引用保持有效。
+    返回是否发生了重载。
+    """
+    global _workflows_signature
+    sig = _workflows_dir_signature()
+    if sig == _workflows_signature:
+        return False
+    registry, comfy = _load_workflows()
+    WORKFLOW_REGISTRY.clear()
+    WORKFLOW_REGISTRY.extend(registry)
+    COMFY_WORKFLOWS.clear()
+    COMFY_WORKFLOWS.update(comfy)
+    _workflows_signature = sig
+    logger.info("workflows 配置已热重载（%d 个工作流）", len(registry))
+    return True
 
 # ---- 用户设置默认值 ----
 DEFAULT_USER_SETTINGS = {

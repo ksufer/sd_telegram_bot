@@ -13,6 +13,7 @@ from services.queue import GenerationTask
 from services import credits, comfy_api
 from handlers.settings import _ensure_settings, _save_settings, _settings_menu
 from handlers import is_authorized, _user_auth_filter
+from handlers.common import refresh_workflows
 from handlers.comfy_settings import _comfy_settings_menu as _comfy_settings_menu_shim
 
 logger = logging.getLogger(__name__)
@@ -152,6 +153,8 @@ async def handle_text(update, context):
     if not is_authorized(user.id if user else 0, chat.id, chat.type):
         return
 
+    refresh_workflows()
+
     # 多图工作流等待文字描述（优先级高于其他 waiting_input）
     _firstlast_frames = None
     _firstlast_prompt = None
@@ -212,13 +215,18 @@ async def handle_text(update, context):
         _clear_firstlast_state(context.user_data)
 
     # 多轮编辑检测：回复 bot 图片结果 + 文字指令（在 _extract_prompt 之前，无需 @bot）
+    # 触发条件：当前就是 qwen-image-edit 工作流；或回复 bot 图片（auto_edit，自动切换工作流，
+    # 与 handle_photo 的 auto_edit 行为一致，不要求当前后端为 comfyui）
     wf_key = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
     wf_config = COMFY_WORKFLOWS.get(wf_key, {})
+    multi_edit_flow = (
+        settings.get("backend") == "comfyui"
+        and wf_key == "qwen-image-edit"
+        and wf_config.get("is_img2img")
+    )
     try:
         if (
-            settings.get("backend") == "comfyui"
-            and (wf_key == "qwen-image-edit" or auto_edit)
-            and (wf_config.get("is_img2img") if wf_key == "qwen-image-edit" else True)
+            (multi_edit_flow or auto_edit)
             and message.reply_to_message
             and message.reply_to_message.from_user
             and message.reply_to_message.from_user.id == context.bot.id
@@ -309,6 +317,11 @@ async def handle_text(update, context):
     # firstlast-video: 已收到首尾帧时正常创建任务，无帧时提示发首帧
     if settings.get("backend") == "comfyui":
         if wf_config.get("is_img2img") and not _firstlast_frames:
+            # 多图工作流已收到第一张图 → 提示发第二张（而非笼统的"发首帧/发图片"）
+            if (wf_config.get("load_image_nodes") and context.user_data
+                    and context.user_data.get("_firstlast_start_frame")):
+                await message.reply_text("已收到第一张图片，请发送第二张图片（可附带文字描述）。")
+                return
             if wf_key == "firstlast-video":
                 await message.reply_text("当前工作流是首尾帧生视频模式，请先发送首帧图片。")
             elif wf_key == "qwen-image-edit":
@@ -562,6 +575,8 @@ async def handle_photo(update, context):
     user_id = user.id if user else (message.sender_chat.id if message.sender_chat else 0)
     if not is_authorized(user_id, chat.id, chat.type):
         return
+
+    refresh_workflows()
 
     # 加载设置
     if context.user_data is not None:

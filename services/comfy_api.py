@@ -25,6 +25,7 @@ from config import (
 logger = logging.getLogger(__name__)
 
 _workflow_cache: dict[str, dict] = {}
+_workflow_cache_mtime: dict[str, int] = {}
 
 
 # ── 输出类型 ─────────────────────────────────────────────
@@ -93,9 +94,10 @@ def _set_node_input(workflow: dict, node_id: str | list[str], input_key: str, va
 
 
 def _load_workflow(wf_key: str) -> dict:
-    """按 workflow key 加载并缓存，每次返回 deepcopy。"""
-    if wf_key in _workflow_cache:
-        return copy.deepcopy(_workflow_cache[wf_key])
+    """按 workflow key 加载并缓存，每次返回 deepcopy。
+
+    缓存按文件 mtime 失效：管理面板上传新 workflow JSON 后无需重启 Bot。
+    """
     wf_config = COMFY_WORKFLOWS.get(wf_key)
     if wf_config is None:
         raise ComfyWorkflowError(f"未知 Workflow: {wf_key}")
@@ -110,11 +112,15 @@ def _load_workflow(wf_key: str) -> dict:
         raise ComfyWorkflowError(f"Workflow '{wf_key}' 缺少 workflow_file/path")
     if not path.exists():
         raise ComfyWorkflowError(f"Workflow 文件不存在: {path}")
+    mtime = path.stat().st_mtime_ns
+    if wf_key in _workflow_cache and _workflow_cache_mtime.get(wf_key) == mtime:
+        return copy.deepcopy(_workflow_cache[wf_key])
     try:
         with open(path, "r", encoding="utf-8") as f:
             _workflow_cache[wf_key] = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
         raise ComfyWorkflowError(f"Workflow 文件无法解析: {e}") from e
+    _workflow_cache_mtime[wf_key] = mtime
     return copy.deepcopy(_workflow_cache[wf_key])
 
 
@@ -461,7 +467,7 @@ async def _poll_result(client: httpx.AsyncClient, prompt_id: str,
             raise ComfyApiError(f"ComfyUI 生成失败: {status}")
 
         outputs = item.get("outputs", {})
-        logger.info(f"ComfyUI outputs: {list(outputs.keys())}")
+        logger.debug("ComfyUI outputs: %s", list(outputs.keys()))
 
         # 捕获优化后的提示词文本（PreviewAny 节点的 UI 输出）
         optimized_prompt = None
@@ -488,7 +494,7 @@ async def _poll_result(client: httpx.AsyncClient, prompt_id: str,
                 if files and len(files) > 0:
                     file_info = files[0]
                     filename = file_info.get("filename")
-                    logger.info(f"ComfyUI 取图候选: node={_node_id}, file_key={file_key}, filename={filename}")
+                    logger.debug("ComfyUI 取图候选: node=%s, file_key=%s, filename=%s", _node_id, file_key, filename)
                     if filename:
                         # Save 类节点优先级 0，其他节点（PreviewImage 等）优先级 1
                         cached_wf = _workflow_cache.get(wf_key or "", {})

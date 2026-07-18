@@ -37,9 +37,13 @@ def is_authorized(user_id: int, chat_id: int, chat_type: str) -> bool:
 def _user_auth_filter():
     """给 MessageHandler / CommandHandler 用的权限 filter。
     空列表返回 filters.ALL，避免 None 参与 & 组合报错。
+    管理员自动并入白名单，与 is_authorized() 的放行规则保持一致。
     """
-    if ALLOWED_USER_IDS:
-        return filters.User(user_id=ALLOWED_USER_IDS)
+    user_ids = list(ALLOWED_USER_IDS)
+    if ADMIN_USER_ID is not None and ADMIN_USER_ID not in user_ids:
+        user_ids.append(ADMIN_USER_ID)
+    if user_ids:
+        return filters.User(user_id=user_ids)
     return filters.ALL
 
 

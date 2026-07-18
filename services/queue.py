@@ -423,20 +423,26 @@ CAPTION_LIMIT = 1024
 CAPTION_MARGIN = 32
 
 
-def _truncate_for_caption(text: str, max_chars: int = 700) -> str:
-    """截断过长文本以适配 Telegram caption 1024 字符限制。
+def _escape_and_truncate(text: str, max_chars: int) -> str:
+    """HTML 转义并截断，保证返回值长度 <= max_chars 且不切断实体。
 
-    注意：应在 html.escape 之前调用，避免切断 HTML 实体。
+    截断在转义后进行，因此 max_chars 按最终发送长度计算，
+    不受 escape 膨胀（& → &amp; 等）影响。
     """
     if max_chars < 1:
         return ""
-    if len(text) <= max_chars:
-        return text
-    return text[:max_chars - 1] + "…"
+    escaped = html.escape(text)
+    if len(escaped) <= max_chars:
+        return escaped
+    seg = escaped[:max_chars - 1]
+    # 末尾若切在实体中间（& 之后没有 ; 闭合），回退到实体起点
+    if seg.rfind("&") > seg.rfind(";"):
+        seg = seg[:seg.rfind("&")]
+    return seg + "…"
 
 
 def _build_sd_info(settings: dict, translated: str, seed: int, elapsed: float) -> str:
-    prompt_text = html.escape(_truncate_for_caption(f"{DEFAULT_PROMPT_PREFIX} {translated}"))
+    prompt_text = _escape_and_truncate(f"{DEFAULT_PROMPT_PREFIX} {translated}", 700)
     return (
         f"<b>Prompt:</b> {prompt_text}\n"
         f"<b>Size:</b> {settings['width']}x{settings['height']}\n"
@@ -486,6 +492,6 @@ def _build_comfy_info(task, settings: dict, translated: str, seed: int, elapsed:
         base_len = len("\n".join(info_parts))
         label = "<b>Prompt:</b> "
         budget = CAPTION_LIMIT - base_len - CAPTION_MARGIN - len(label)
-        actual = html.escape(_truncate_for_caption(translated, budget))
+        actual = _escape_and_truncate(translated, budget)
         info_parts.insert(0, f"{label}{actual}")
     return "\n".join(info_parts)

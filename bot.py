@@ -55,6 +55,11 @@ def main():
 
     app = builder.build()
 
+    async def on_error(update, context):
+        logger.error("处理更新时发生未捕获异常", exc_info=context.error)
+
+    app.add_error_handler(on_error)
+
     queue = GenerationQueue(app)
     app.bot_data["queue"] = queue
 

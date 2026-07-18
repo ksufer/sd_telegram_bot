@@ -30,9 +30,14 @@ def _extract_target_and_arg(update, context) -> tuple[int | None, int | None]:
 
     # 回复消息时，目标为被回复用户
     if message.reply_to_message:
-        target = message.reply_to_message.from_user.id
-        arg = int(parts[2]) if len(parts) >= 3 else None
-        return target, arg
+        from_user = message.reply_to_message.from_user
+        if from_user is None:
+            return None, None
+        try:
+            arg = int(parts[2]) if len(parts) >= 3 else None
+        except ValueError:
+            return None, None
+        return from_user.id, arg
 
     # 直接指定 user_id（parts[1] 是子命令，parts[2] 才是 user_id）
     if len(parts) >= 3:

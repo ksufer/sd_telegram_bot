@@ -234,18 +234,28 @@ class GenerationQueue:
 
         face_prompt = None
         manual_face = settings.get("comfy_face_prompt", "")
-        if wf_config.get("face_detailer_prompt_node"):
+        # 脸部精修已关闭时跳过提取（workflow 无开关节点 = detailer 恒开，仍提取）
+        facedetailer_off = ("facedetailer_switch_node" in wf_config
+                            and not settings.get("comfy_facedetailer_enabled", True))
+        if wf_config.get("face_detailer_prompt_node") and not facedetailer_off:
             if manual_face:
                 face_prompt = manual_face
             else:
                 await updater.set_stage("正在提取脸部提示词...")
                 face_prompt = await extract_face_prompt(task.prompt)
 
+        async def _comfy_progress(elapsed: int):
+            """长任务心跳：向用户汇报已用时间（视频任务可达 20+ 分钟）。"""
+            await updater.set_stage(
+                f"正在生成（ComfyUI）... 已用 {elapsed // 60}分{elapsed % 60:02d}秒"
+            )
+
         comfy_output, actual_seed, optimized_prompt = await comfy_api.generate(
             translated, settings, seed,
             uploaded_image=uploaded_image,
             uploaded_images=uploaded_images,
             face_prompt=face_prompt,
+            progress_callback=_comfy_progress,
         )
         return comfy_output, actual_seed, wf_config, optimized_prompt
 

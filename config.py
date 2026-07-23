@@ -27,6 +27,8 @@ DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 COMFY_API_BASE = os.getenv("COMFY_API_BASE", "http://10.126.126.4:8188")
 COMFY_POLL_INTERVAL = 2
 COMFY_TIMEOUT = 1500
+# 长任务轮询期间向用户汇报已用时间的间隔（秒）
+COMFY_PROGRESS_HEARTBEAT_INTERVAL = 10
 COMFY_DEFAULT_WORKFLOW = "z-image-turbo"
 
 # ---- 工作流注册表（主菜单驱动） ----

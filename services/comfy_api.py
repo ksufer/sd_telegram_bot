@@ -16,6 +16,7 @@ from config import (
     COMFY_DEFAULT_WORKFLOW,
     COMFY_POLL_INTERVAL,
     COMFY_TIMEOUT,
+    COMFY_PROGRESS_HEARTBEAT_INTERVAL,
     COMFY_VIDEO_FRAMES_PRESETS,
     COMFY_LORA_VARIANTS,
     COMFY_PROMPT_OPTIMIZE_MODES,
@@ -505,10 +506,22 @@ async def _submit_prompt(client: httpx.AsyncClient, workflow: dict) -> str:
 
 async def _poll_result(client: httpx.AsyncClient, prompt_id: str,
                      wf_config: dict | None = None,
-                     wf_key: str | None = None) -> tuple[ComfyOutput, str | None]:
+                     wf_key: str | None = None,
+                     progress_callback=None) -> tuple[ComfyOutput, str | None]:
     deadline = time.monotonic() + COMFY_TIMEOUT
+    start = time.monotonic()
+    last_beat = start
     output_node_classes = {"SaveImage", "SaveImageAdvanced", "Image Saver Simple", "SaveVideo", "VHS_VideoCombine"}
     while time.monotonic() < deadline:
+        # 心跳：长任务（视频可达 20+ 分钟）期间定期汇报已用时间，避免状态看似卡死
+        if progress_callback:
+            now = time.monotonic()
+            if now - last_beat >= COMFY_PROGRESS_HEARTBEAT_INTERVAL:
+                last_beat = now
+                try:
+                    await progress_callback(int(now - start))
+                except Exception:
+                    logger.debug("进度回调异常", exc_info=True)
         try:
             resp = await client.get(f"/history/{prompt_id}")
             resp.raise_for_status()
@@ -621,7 +634,9 @@ async def _download_image(
 async def generate(prompt: str, settings: dict, seed: int,
                    uploaded_image: str | None = None,
                    uploaded_images: dict[str, str] | None = None,
-                   face_prompt: str | None = None) -> tuple[ComfyOutput, int, str | None]:
+                   face_prompt: str | None = None,
+                   progress_callback=None) -> tuple[ComfyOutput, int, str | None]:
+    """提交 workflow 并轮询结果。progress_callback(elapsed_seconds) 在长任务期间定期调用。"""
     # 解析为实际生效的 wf_key（用户旧 key 已被删除时回退），缓存键随之正确
     wf_key, wf_config = _get_wf_config(settings)
     workflow = _load_workflow(wf_key)
@@ -632,5 +647,6 @@ async def generate(prompt: str, settings: dict, seed: int,
     timeout = httpx.Timeout(connect=10, read=COMFY_TIMEOUT, write=30, pool=10)
     async with httpx.AsyncClient(base_url=COMFY_API_BASE, timeout=timeout) as client:
         prompt_id = await _submit_prompt(client, payload)
-        output, optimized_prompt = await _poll_result(client, prompt_id, wf_config, wf_key)
+        output, optimized_prompt = await _poll_result(
+            client, prompt_id, wf_config, wf_key, progress_callback)
     return output, seed, optimized_prompt

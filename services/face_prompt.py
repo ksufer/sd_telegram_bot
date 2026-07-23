@@ -4,7 +4,6 @@ import re
 from openai import AsyncOpenAI
 
 from config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, NSFW_BODY_KEYWORDS
-from services.network import retry_on_network_error
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +17,8 @@ def _get_client() -> AsyncOpenAI:
         _client = AsyncOpenAI(
             api_key=DEEPSEEK_API_KEY,
             base_url=DEEPSEEK_BASE_URL,
-            timeout=30,
-            max_retries=0,  # 重试交给外层 retry_on_network_error
+            timeout=10,  # 锦上添花型调用，失败回退 workflow 默认提示词，不宜久等
+            max_retries=0,
         )
     return _client
 
@@ -49,16 +48,14 @@ async def extract_face_prompt(text: str) -> str:
     if not DEEPSEEK_API_KEY:
         return ""
     try:
-        response = await retry_on_network_error(
-            lambda: _get_client().chat.completions.create(
-                model="deepseek-v4-flash",
-                messages=[
-                    {"role": "system", "content": FACE_EXTRACT_PROMPT},
-                    {"role": "user", "content": _sanitize_nsfw(text)},
-                ],
-                temperature=0.3,
-                max_tokens=1024,
-            ),
+        response = await _get_client().chat.completions.create(
+            model="deepseek-v4-flash",
+            messages=[
+                {"role": "system", "content": FACE_EXTRACT_PROMPT},
+                {"role": "user", "content": _sanitize_nsfw(text)},
+            ],
+            temperature=0.3,
+            max_tokens=1024,
         )
         return (response.choices[0].message.content or "").strip()
     except Exception:

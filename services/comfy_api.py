@@ -4,6 +4,7 @@ import json
 import logging
 import random
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -64,13 +65,24 @@ class ComfyTimeoutError(Exception):
 
 # ── Workflow 配置工具 ────────────────────────────────────
 
-def _get_wf_config(settings: dict) -> dict:
+def _get_wf_config(settings: dict) -> tuple[str, dict]:
+    """解析用户 workflow 设置，返回 (实际 wf_key, wf_config)。
+
+    用户保存的 key 可能已被管理面板删除：依次回退 默认 workflow → 第一个
+    workflow，避免旧设置锁死所有生成。COMFY_WORKFLOWS 为空时返回 (原 key, {})。
+    """
     wf_key = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
     if wf_key in COMFY_WORKFLOWS:
-        return COMFY_WORKFLOWS[wf_key]
+        return wf_key, COMFY_WORKFLOWS[wf_key]
     if COMFY_DEFAULT_WORKFLOW in COMFY_WORKFLOWS:
-        return COMFY_WORKFLOWS[COMFY_DEFAULT_WORKFLOW]
-    return next(iter(COMFY_WORKFLOWS.values())) if COMFY_WORKFLOWS else {}
+        logger.warning("Workflow '%s' 不存在，回退到默认 '%s'",
+                       wf_key, COMFY_DEFAULT_WORKFLOW)
+        return COMFY_DEFAULT_WORKFLOW, COMFY_WORKFLOWS[COMFY_DEFAULT_WORKFLOW]
+    if COMFY_WORKFLOWS:
+        first_key = next(iter(COMFY_WORKFLOWS))
+        logger.warning("Workflow '%s' 不存在，回退到 '%s'", wf_key, first_key)
+        return first_key, COMFY_WORKFLOWS[first_key]
+    return wf_key, {}
 
 
 def _set_node_input(workflow: dict, node_id: str | list[str], input_key: str, value):
@@ -143,7 +155,7 @@ def _apply_model(workflow: dict, wf_config: dict, settings: dict) -> None:
     """注入模型节点。model_selectable=False 时保留 workflow 默认模型。"""
     if wf_config.get("model_selectable", True):
         _set_node_input(workflow, wf_config["model_node"], wf_config["model_key"],
-                        settings.get("comfy_model", wf_config.get("default_model", "")))
+                        settings.get("comfy_model") or wf_config.get("default_model", ""))
 
 
 def _apply_dimensions(workflow: dict, wf_config: dict, settings: dict) -> None:
@@ -202,6 +214,12 @@ def _apply_switches(workflow: dict, wf_config: dict, settings: dict) -> None:
                         wf_config["upscale_switch_key"], pre_pussy_source)
 
     if "pussydetailer_switch_node" in wf_config:
+        if "upscale_switch_node" not in wf_config:
+            # 缺少上游开关时级联源为 None，写入节点 input 会导致 ComfyUI 400
+            raise ComfyWorkflowError(
+                "级联开关配置错误: 'pussydetailer_switch_node' 依赖上游 "
+                "'upscale_switch_node'"
+            )
         pussydetailer_on = settings.get("comfy_pussydetailer_enabled", True)
         pre_face_source = (
             [wf_config["upscale_switch_node"], 0] if pussydetailer_on
@@ -224,6 +242,12 @@ def _apply_switches(workflow: dict, wf_config: dict, settings: dict) -> None:
                 else off_target
             )
         else:
+            if "pussydetailer_switch_node" not in wf_config:
+                # 同上：缺少上游开关时级联源为 None
+                raise ComfyWorkflowError(
+                    "级联开关配置错误: 'facedetailer_switch_node' 未配置 "
+                    "'facedetailer_switch_on' 时依赖上游 'pussydetailer_switch_node'"
+                )
             save_source = (
                 [wf_config["pussydetailer_switch_node"], 0] if facedetailer_on
                 else pre_face_source
@@ -281,10 +305,15 @@ def _apply_prompt_optimize(workflow: dict, wf_config: dict, settings: dict) -> N
         if enabled and "prompt_optimize_seed_node" in wf_config:
             seed_node = wf_config["prompt_optimize_seed_node"]
             seed_key = wf_config["prompt_optimize_seed_key"]
+            # seed_key 是 "sampling_mode.seed" 这类扁平带点的 key，必须直接赋值，
+            # 不能走 _set_node_input（会按点号分割成嵌套路径）
             try:
                 workflow[seed_node]["inputs"][seed_key] = random.randint(0, 2**32 - 1)
             except KeyError:
-                pass
+                logger.warning(
+                    "prompt_optimize seed 注入失败: 节点 '%s' 或字段 '%s' 不存在",
+                    seed_node, seed_key,
+                )
 
 
 def _apply_face_prompt(workflow: dict, wf_config: dict, face_prompt: str | None,
@@ -316,7 +345,7 @@ def _build_payload(workflow: dict, prompt: str, seed: int, settings: dict,
                    uploaded_images: dict[str, str] | None = None,
                    face_prompt: str | None = None) -> dict:
     """根据 workflow 配置替换 prompt、seed、模型、分辨率等节点。"""
-    wf = _get_wf_config(settings)
+    _, wf = _get_wf_config(settings)
 
     # 计算完整最终提示词（含 prefix / append）
     full_prompt = settings.get("comfy_prompt", "") or prompt
@@ -403,8 +432,11 @@ def validate_workflow() -> None:
 
 async def get_models(settings: dict) -> list[str]:
     """从 /object_info 获取当前 workflow 的可用模型列表。"""
-    wf = _get_wf_config(settings)
-    loader_class = wf["model_loader_class"]
+    wf_key, wf = _get_wf_config(settings)
+    loader_class = wf.get("model_loader_class")
+    if not loader_class:
+        logger.warning("Workflow '%s' 缺少 model_loader_class，模型列表为空", wf_key)
+        return []
     model_key = wf["model_key"]
     url = f"/object_info/{loader_class}"
     async with httpx.AsyncClient(base_url=COMFY_API_BASE, timeout=10) as client:
@@ -416,15 +448,17 @@ async def get_models(settings: dict) -> list[str]:
     if model_key not in required:
         logger.warning(
             "Workflow '%s': model_key '%s' 不在 %s 的 required 字段中，模型列表为空",
-            settings.get("comfy_workflow", "?"), model_key, loader_class
+            wf_key, model_key, loader_class
         )
         return []
     models = required[model_key][0]
     return models if isinstance(models, list) else []
 
 
-async def upload_image(image_bytes: bytes, filename: str = "input.png") -> str:
-    """上传图片到 ComfyUI，返回服务器上的文件名。"""
+async def upload_image(image_bytes: bytes, filename: str | None = None) -> str:
+    """上传图片到 ComfyUI，返回服务器上的文件名。默认生成唯一文件名避免互相覆盖。"""
+    if filename is None:
+        filename = f"tg_{uuid.uuid4().hex[:12]}.png"
     async with httpx.AsyncClient(base_url=COMFY_API_BASE, timeout=30) as client:
         resp = await client.post(
             "/upload/image",
@@ -439,7 +473,29 @@ async def upload_image(image_bytes: bytes, filename: str = "input.png") -> str:
 
 async def _submit_prompt(client: httpx.AsyncClient, workflow: dict) -> str:
     resp = await client.post("/prompt", json={"prompt": workflow})
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        # ComfyUI 400 会返回节点校验细节: {"error": {"type","message"}, "node_errors": {...}}
+        detail = ""
+        try:
+            err = e.response.json()
+            parts = []
+            error = err.get("error") or {}
+            if isinstance(error, dict) and error.get("message"):
+                parts.append(str(error["message"]))
+            node_errors = err.get("node_errors") or {}
+            for nid, nerr in list(node_errors.items())[:3]:
+                msgs = [m.get("message", "") for m in nerr.get("errors", [])
+                        if isinstance(m, dict)]
+                parts.append(f"节点 {nid}: {'; '.join(m for m in msgs if m)[:100]}")
+            detail = "; ".join(p for p in parts if p)
+        except Exception:
+            pass
+        raise ComfyApiError(
+            f"ComfyUI 拒绝 prompt 提交 ({e.response.status_code}): "
+            f"{detail or e.response.text[:300]}"
+        ) from e
     data = resp.json()
     prompt_id = data.get("prompt_id")
     if not prompt_id:
@@ -453,8 +509,21 @@ async def _poll_result(client: httpx.AsyncClient, prompt_id: str,
     deadline = time.monotonic() + COMFY_TIMEOUT
     output_node_classes = {"SaveImage", "SaveImageAdvanced", "Image Saver Simple", "SaveVideo", "VHS_VideoCombine"}
     while time.monotonic() < deadline:
-        resp = await client.get(f"/history/{prompt_id}")
-        resp.raise_for_status()
+        try:
+            resp = await client.get(f"/history/{prompt_id}")
+            resp.raise_for_status()
+        except httpx.TransportError as e:
+            # 长任务需轮询数百次，瞬时网络错误不应终结整个生成（deadline 兜底）
+            logger.warning("轮询 /history 网络错误，继续等待: %s", e)
+            await asyncio.sleep(COMFY_POLL_INTERVAL)
+            continue
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code >= 500:
+                logger.warning("轮询 /history 返回 %s，继续等待",
+                               e.response.status_code)
+                await asyncio.sleep(COMFY_POLL_INTERVAL)
+                continue
+            raise  # 4xx 属于永久错误，立即失败
         history = resp.json()
 
         item = history.get(prompt_id)
@@ -489,22 +558,23 @@ async def _poll_result(client: httpx.AsyncClient, prompt_id: str,
                 file_keys = ("videos", "gifs", "images")
             else:
                 file_keys = ("images", "gifs", "videos")
-            for file_key in file_keys:
+            for file_type_rank, file_key in enumerate(file_keys):
                 files = node_output.get(file_key)
                 if files and len(files) > 0:
                     file_info = files[0]
                     filename = file_info.get("filename")
                     logger.debug("ComfyUI 取图候选: node=%s, file_key=%s, filename=%s", _node_id, file_key, filename)
                     if filename:
-                        # Save 类节点优先级 0，其他节点（PreviewImage 等）优先级 1
+                        # Save 类节点优先级 0，其他节点（PreviewImage 等）优先级 1；
+                        # 同级再按 file_key 序位（视频任务 videos/gifs 优先于 images）
                         cached_wf = _workflow_cache.get(wf_key or "", {})
                         node = cached_wf.get(_node_id, {})
                         class_type = node.get("class_type", "") if isinstance(node, dict) else ""
                         priority = 0 if class_type in output_node_classes else 1
-                        candidates.append((priority, _node_id, file_info, node_output, file_key))
+                        candidates.append((priority, file_type_rank, _node_id, file_info, node_output, file_key))
         if candidates:
-            candidates.sort(key=lambda x: x[0])
-            priority, _node_id, file_info, _, file_key = candidates[0]
+            candidates.sort(key=lambda x: (x[0], x[1]))
+            priority, _, _node_id, file_info, _, file_key = candidates[0]
             filename = file_info.get("filename")
             logger.info(f"ComfyUI 取图: node={_node_id}, file_key={file_key}, filename={filename}, priority={priority}")
             data = await _download_image(
@@ -552,8 +622,8 @@ async def generate(prompt: str, settings: dict, seed: int,
                    uploaded_image: str | None = None,
                    uploaded_images: dict[str, str] | None = None,
                    face_prompt: str | None = None) -> tuple[ComfyOutput, int, str | None]:
-    wf_key = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
-    wf_config = _get_wf_config(settings)
+    # 解析为实际生效的 wf_key（用户旧 key 已被删除时回退），缓存键随之正确
+    wf_key, wf_config = _get_wf_config(settings)
     workflow = _load_workflow(wf_key)
     payload = _build_payload(workflow, prompt, seed, settings,
                              uploaded_image=uploaded_image,

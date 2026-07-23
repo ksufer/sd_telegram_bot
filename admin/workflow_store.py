@@ -1,7 +1,10 @@
 """读写 workflow 配置文件，支持原子写入和软操作。"""
 
 import json
+import os
 import re
+import tempfile
+from datetime import datetime
 from pathlib import Path
 
 from admin.paths import WORKFLOW_DIR
@@ -23,10 +26,16 @@ def save_workflow(data: dict) -> None:
         raise ValueError(f"无效的工作流 key: {key}")
     WORKFLOW_DIR.mkdir(parents=True, exist_ok=True)
     path = WORKFLOW_DIR / f"{key}.json"
-    tmp = path.with_suffix(".json.tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    tmp.replace(path)
+    # tmp 名唯一化，避免并发写同 key 时互相覆盖
+    tmp = tempfile.NamedTemporaryFile(
+        "w", dir=WORKFLOW_DIR, delete=False, suffix=".tmp", encoding="utf-8")
+    try:
+        with tmp:
+            json.dump(data, tmp, ensure_ascii=False, indent=2)
+        os.replace(tmp.name, path)
+    except Exception:
+        Path(tmp.name).unlink(missing_ok=True)
+        raise
 
 
 def disable_workflow(key: str) -> None:
@@ -46,12 +55,17 @@ def enable_workflow(key: str) -> None:
 
 
 def archive_workflow(key: str) -> None:
+    if not re.fullmatch(r"[a-z0-9_-]+", key):
+        raise FileNotFoundError(key)
     src = WORKFLOW_DIR / f"{key}.json"
     if not src.exists():
         raise FileNotFoundError(key)
     trash = WORKFLOW_DIR / ".trash"
     trash.mkdir(exist_ok=True)
-    src.rename(trash / f"{key}.json")
+    dst = trash / f"{key}.json"
+    if dst.exists():
+        dst = trash / f"{key}-{datetime.now():%Y%m%d%H%M%S}.json"
+    src.rename(dst)
 
 
 def build_comfy_from_form(form: dict) -> dict:
@@ -82,5 +96,34 @@ def build_comfy_from_form(form: dict) -> dict:
     for field in node_fields:
         val = form.get(field, "").strip()
         if val:
-            comfy[field] = val
+            comfy[field] = _parse_json_value(val)
     return comfy
+
+
+def _parse_json_value(val: str):
+    """形如 JSON 数组/对象的值还原为对应类型（如 ["6","15"]），否则保留原字符串。"""
+    if val[:1] in ("[", "{"):
+        try:
+            return json.loads(val)
+        except json.JSONDecodeError:
+            pass
+    return val
+
+
+# form.html 实际渲染的 comfy 字段（编辑时部分更新，其余字段保留原值）
+FORM_COMFY_FIELDS = [
+    "prompt_node", "prompt_key", "seed_node", "seed_key",
+    "model_node", "model_key", "model_loader_class",
+    "width_node", "width_key", "height_node", "height_key",
+    "default_model",
+]
+
+
+def update_comfy_from_form(comfy: dict, form: dict) -> None:
+    """部分更新 comfy：只覆盖表单渲染的字段，清空的字段移除，未渲染的字段保留。"""
+    for field in FORM_COMFY_FIELDS:
+        val = form.get(field, "").strip()
+        if val:
+            comfy[field] = _parse_json_value(val)
+        else:
+            comfy.pop(field, None)

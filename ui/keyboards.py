@@ -79,6 +79,13 @@ def comfy_generation_menu(
             toggle_row = build_toggle_row(settings, wf_config)
             if toggle_row:
                 rows.append(toggle_row)
+            if include_seed_buttons:
+                rows.append([
+                    InlineKeyboardButton("🔁 复用本次 Seed",
+                                         callback_data=f"comfy_reuse_seed_{context_id}"),
+                    InlineKeyboardButton("🎲 随机 Seed",
+                                         callback_data="comfy_random_seed"),
+                ])
             rows.append([
                 InlineKeyboardButton("⚙️ ComfyUI 设置", callback_data="comfy_settings"),
                 InlineKeyboardButton("关闭菜单", callback_data="close_menu"),

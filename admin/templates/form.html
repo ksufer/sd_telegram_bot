@@ -32,40 +32,40 @@
     <fieldset style="margin-bottom:20px; padding:15px; border:1px solid #ddd; border-radius:6px;">
         <legend>节点映射 (ComfyUI)</legend>
         <label>Workflow 文件 <input name="workflow_file"
-               value="{{ wf.comfy.workflow_file if wf else '' }}" style="width:300px;"></label>
+               value="{{ (wf.comfy.workflow_file | formval) if wf else '' }}" style="width:300px;"></label>
         <span style="font-size:12px;color:#888;">文件名，如 zit-up-pussy-face.json</span><br><br>
 
         <label>ComfyUI Label <input name="comfy_label"
-               value="{{ wf.comfy.label if wf else '' }}" style="width:300px;"></label><br><br>
+               value="{{ (wf.comfy.label | formval) if wf else '' }}" style="width:300px;"></label><br><br>
 
         <label>prompt_node <input name="prompt_node"
-               value="{{ wf.comfy.prompt_node if wf else '' }}" style="width:100px;"></label>
+               value="{{ (wf.comfy.prompt_node | formval) if wf else '' }}" style="width:100px;"></label>
         <label>prompt_key <input name="prompt_key"
-               value="{{ wf.comfy.prompt_key if wf else '' }}" style="width:100px;"></label><br><br>
+               value="{{ (wf.comfy.prompt_key | formval) if wf else '' }}" style="width:100px;"></label><br><br>
 
         <label>seed_node <input name="seed_node"
-               value="{{ wf.comfy.seed_node if wf else '' }}" style="width:100px;"></label>
+               value="{{ (wf.comfy.seed_node | formval) if wf else '' }}" style="width:100px;"></label>
         <label>seed_key <input name="seed_key"
-               value="{{ wf.comfy.seed_key if wf else '' }}" style="width:100px;"></label><br><br>
+               value="{{ (wf.comfy.seed_key | formval) if wf else '' }}" style="width:100px;"></label><br><br>
 
         <label>model_node <input name="model_node"
-               value="{{ wf.comfy.model_node if wf else '' }}" style="width:100px;"></label>
+               value="{{ (wf.comfy.model_node | formval) if wf else '' }}" style="width:100px;"></label>
         <label>model_key <input name="model_key"
-               value="{{ wf.comfy.model_key if wf else '' }}" style="width:100px;"></label>
+               value="{{ (wf.comfy.model_key | formval) if wf else '' }}" style="width:100px;"></label>
         <label>model_loader_class <input name="model_loader_class"
-               value="{{ wf.comfy.model_loader_class if wf else '' }}" style="width:150px;"></label><br><br>
+               value="{{ (wf.comfy.model_loader_class | formval) if wf else '' }}" style="width:150px;"></label><br><br>
 
         <label>width_node <input name="width_node"
-               value="{{ wf.comfy.width_node if wf else '' }}" style="width:80px;"></label>
+               value="{{ (wf.comfy.width_node | formval) if wf else '' }}" style="width:80px;"></label>
         <label>width_key <input name="width_key"
-               value="{{ wf.comfy.width_key if wf else '' }}" style="width:80px;"></label>
+               value="{{ (wf.comfy.width_key | formval) if wf else '' }}" style="width:80px;"></label>
         <label>height_node <input name="height_node"
-               value="{{ wf.comfy.height_node if wf else '' }}" style="width:80px;"></label>
+               value="{{ (wf.comfy.height_node | formval) if wf else '' }}" style="width:80px;"></label>
         <label>height_key <input name="height_key"
-               value="{{ wf.comfy.height_key if wf else '' }}" style="width:80px;"></label><br><br>
+               value="{{ (wf.comfy.height_key | formval) if wf else '' }}" style="width:80px;"></label><br><br>
 
         <label>default_model <input name="default_model"
-               value="{{ wf.comfy.default_model if wf else '' }}" style="width:350px;"></label><br><br>
+               value="{{ (wf.comfy.default_model | formval) if wf else '' }}" style="width:350px;"></label><br><br>
 
         <label>model_selectable
             <select name="model_selectable">
@@ -83,6 +83,7 @@
 
         <p style="margin-top:10px;font-size:13px;color:#888;">
             其他节点字段（load_image_node、switch节点、lora节点等）请编辑 JSON 文件或后续扩展表单。
+            多节点字段（如 prompt_node）可填 JSON 数组，如 ["6","15"]。
         </p>
     </fieldset>
 

@@ -5,6 +5,7 @@ import re
 from typing import Callable
 
 from telegram import MessageEntity, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.error import BadRequest
 from telegram.ext import MessageHandler, CommandHandler, CallbackQueryHandler, filters
 
 from config import ADMIN_USER_ID, DEFAULT_USER_SETTINGS, COMFY_WORKFLOWS, COMFY_DEFAULT_WORKFLOW
@@ -13,7 +14,7 @@ from services.queue import GenerationTask
 from services import credits, comfy_api
 from handlers.settings import _ensure_settings, _save_settings, _settings_menu
 from handlers import is_authorized, _user_auth_filter
-from handlers.common import refresh_workflows
+from handlers.common import refresh_workflows, safe_answer
 from handlers.comfy_settings import _comfy_settings_menu as _comfy_settings_menu_shim
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,7 @@ def _clear_firstlast_state(user_data: dict | None) -> None:
         return
     user_data.pop("_firstlast_start_frame", None)
     user_data.pop("_firstlast_end_frame", None)
+    user_data.pop("_firstlast_caption", None)
 
 
 # ═══ 流程辅助函数（抽取重复的额度检查/上传/入队逻辑） ═══
@@ -162,9 +164,11 @@ async def handle_text(update, context):
         start_frame = context.user_data.get("_firstlast_start_frame")
         end_frame = context.user_data.get("_firstlast_end_frame")
         if start_frame and end_frame:
-            prompt_text = (message.text or "").strip()
+            # 复用 _extract_prompt（群聊中去除 @bot 提及；非 @bot 消息静默忽略）
+            prompt_text, prompt_for_me = _extract_prompt(message, context.bot.username)
             if not prompt_text:
-                await message.reply_text("请输入编辑描述文字，或发送 /cancel 取消。")
+                if prompt_for_me:
+                    await message.reply_text("请输入编辑描述文字，或发送 /cancel 取消。")
                 return
             # 从当前 workflow 配置读取角色名（如 firstlast: start/end, qwen-2pic: image1/image2）
             wf_key = context.user_data.get("settings", {}).get("comfy_workflow", "")
@@ -305,12 +309,17 @@ async def handle_text(update, context):
             return
     except Exception:
         logger.error("多轮编辑检测异常", exc_info=True)
+        return
 
     # 群聊 @bot 检测 + 提示词提取（多轮编辑未触发时才走到这里）
     prompt, is_for_me = _extract_prompt(message, context.bot.username)
     if prompt is None:
         if is_for_me:
             await message.reply_text("请在 @Bot 后输入提示词。")
+        return
+    if not prompt:
+        # 私聊空白文本（群聊空提示已在 _extract_prompt 内归一为 None）
+        await message.reply_text("提示词不能为空，请重新输入。")
         return
 
     # 图生图工作流拦截纯文字消息（多轮编辑未触发时）
@@ -436,6 +445,9 @@ async def _handle_comfy_seed_input(update, context):
     settings = _ensure_settings(context, user_id)
     try:
         seed = int(update.message.text.strip())
+        if seed < -1 or seed > 2**63 - 1:
+            await update.message.reply_text("种子范围为 -1（随机）~ 2^63-1，请重新输入。发送 /cancel 取消。")
+            return
         settings["comfy_seed"] = seed
     except ValueError:
         await update.message.reply_text("请输入有效的数字。发送 /cancel 取消。")
@@ -454,6 +466,9 @@ async def _handle_seed_input(update, context):
     settings = _ensure_settings(context, user_id)
     try:
         seed = int(update.message.text.strip())
+        if seed < -1 or seed > 2**63 - 1:
+            await update.message.reply_text("种子范围为 -1（随机）~ 2^63-1，请重新输入。发送 /cancel 取消。")
+            return
         settings["seed"] = seed
     except ValueError:
         await update.message.reply_text("请输入有效的数字。发送 /cancel 取消。")
@@ -527,14 +542,17 @@ async def handle_mode(update, context):
 async def handle_mode_callback(update, context):
     """处理后端切换。"""
     query = update.callback_query
-    await query.answer()
+    await safe_answer(query)
 
     user = query.from_user
     chat = query.message.chat if query.message else None
     if user is None or chat is None:
         return
     if not is_authorized(user.id, chat.id, chat.type):
-        await query.edit_message_text("⛔ 无使用权限")
+        try:
+            await query.edit_message_text("⛔ 无使用权限")
+        except BadRequest:
+            pass
         return
 
     backend = query.data.split(":", 1)[1]  # "sd" or "comfyui"
@@ -543,25 +561,35 @@ async def handle_mode_callback(update, context):
         try:
             comfy_api.validate_workflow()
         except Exception as e:
-            await query.edit_message_text(
-                f"ComfyUI 工作流不可用：{e}\n请联系管理员。"
-            )
+            try:
+                await query.edit_message_text(
+                    f"ComfyUI 工作流不可用：{e}\n请联系管理员。"
+                )
+            except BadRequest:
+                pass
             return
 
     settings = _ensure_settings(context, user.id)
     settings["backend"] = backend
     _save_settings(context, user.id)
 
+    # 清除 firstlast 多图状态（切换后端时重置，与 _switch_to_workflow 一致）
+    if context.user_data:
+        _clear_firstlast_state(context.user_data)
+
     label = "SD WebUI" if backend == "sd" else "ComfyUI"
-    if backend == "comfyui":
-        await query.edit_message_text(
-            f"已切换为 {label} 模式。\n直接发送提示词即可生成，或进入设置调整参数：",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("⚙️ ComfyUI 设置", callback_data="comfy_settings"),
-            ]]),
-        )
-    else:
-        await query.edit_message_text(f"已切换为 {label} 模式。现在直接发送提示词即可生成图片。")
+    try:
+        if backend == "comfyui":
+            await query.edit_message_text(
+                f"已切换为 {label} 模式。\n直接发送提示词即可生成，或进入设置调整参数：",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("⚙️ ComfyUI 设置", callback_data="comfy_settings"),
+                ]]),
+            )
+        else:
+            await query.edit_message_text(f"已切换为 {label} 模式。现在直接发送提示词即可生成图片。")
+    except BadRequest:
+        pass
 
 
 async def handle_photo(update, context):
@@ -656,6 +684,10 @@ async def handle_photo(update, context):
                 await message.reply_text(f"上传第一张图片失败: {e}")
                 return
             user_data["_firstlast_start_frame"] = uploaded_name
+            # 相册（media group）的 caption 通常挂在第一张图上，暂存供步骤2 取用
+            caption = _clean_caption(message, context)
+            if caption:
+                user_data["_firstlast_caption"] = caption
             await message.reply_text("✅ 已收到第一张图片，请发送第二张图片（可附带文字描述）。")
             return
 
@@ -672,14 +704,16 @@ async def handle_photo(update, context):
             return
         user_data["_firstlast_end_frame"] = uploaded_name
 
-        # 提取 caption（复用 _clean_caption）
+        # 提取 caption（复用 _clean_caption）；无 caption 时取用步骤1 暂存的相册 caption
         caption = _clean_caption(message, context)
+        if not caption:
+            caption = user_data.get("_firstlast_caption", "")
 
         if caption:
-            # 有 caption → 清除状态，继续走到额度检查 + 任务创建
+            # 有 caption → 继续走到额度检查 + 任务创建
+            # 注意：不在此处清除 user_data 状态，保留到 enqueue 成功后再清理（与 handle_text 的 B1 修复对齐）
             start_frame = user_data.get("_firstlast_start_frame")
             end_frame = user_data.get("_firstlast_end_frame")
-            _clear_firstlast_state(user_data)
             # 设置局部变量，后续任务创建代码会用到
             _firstlast_frames = {roles[0]: start_frame, roles[1]: end_frame}
             _firstlast_prompt = caption
@@ -765,6 +799,10 @@ async def handle_photo(update, context):
             await credits.refund_one(user_id)
         await message.reply_text("任务提交失败，请稍后重试。")
         return
+
+    # enqueue 成功后清理 firstlast 状态（B1 修复：只在成功路径清除）
+    if _firstlast_frames and context.user_data:
+        _clear_firstlast_state(context.user_data)
 
 
 def get_handlers() -> list:

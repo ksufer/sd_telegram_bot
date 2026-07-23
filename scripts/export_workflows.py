@@ -6,7 +6,10 @@ import shutil
 import sys
 from pathlib import Path
 
-from config import WORKFLOW_REGISTRY, COMFY_WORKFLOWS
+# 允许从项目根目录直接运行：python scripts/export_workflows.py
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from config import WORKFLOW_REGISTRY, COMFY_WORKFLOWS, _infer_user_configurable
 
 WORKFLOW_DIR = Path("data/workflows")
 COMFY_DIR = Path("data/comfy_workflows")
@@ -25,11 +28,18 @@ def export(dry_run: bool = False, force: bool = False) -> None:
         comfy_cfg = COMFY_WORKFLOWS.get(comfy_key, {})
 
         # 复制 ComfyUI workflow JSON 到新目录
+        # 无 path 的工作流（如 krea2 已迁移为 workflow_file）跳过拷贝，沿用现有字段
+        workflow_file = comfy_cfg.get("workflow_file", "")
         workflow_path = comfy_cfg.get("path", "")
-        src = Path(workflow_path)
-        dst = COMFY_DIR / src.name
-        if src.exists() and not dry_run:
-            shutil.copy2(src, dst)
+        if workflow_path:
+            src = Path(workflow_path)
+            workflow_file = src.name
+            dst = COMFY_DIR / src.name
+            if src.exists() and not dry_run:
+                if dst.exists() and not force:
+                    print(f"SKIP copy {dst} (已存在，使用 --force 覆盖)")
+                else:
+                    shutil.copy2(src, dst)
 
         data = {
             "schema_version": 1,
@@ -45,9 +55,9 @@ def export(dry_run: bool = False, force: bool = False) -> None:
             },
             "comfy": {
                 **comfy_cfg,
-                "workflow_file": src.name,
+                "workflow_file": workflow_file,
             },
-            "user_configurable": _default_user_configurable(comfy_cfg),
+            "user_configurable": _infer_user_configurable(comfy_cfg),
         }
         # 移除旧 path 字段（已替换为 workflow_file）
         data["comfy"].pop("path", None)
@@ -67,30 +77,6 @@ def export(dry_run: bool = False, force: bool = False) -> None:
             print(f"Wrote {out_path}")
 
     print(f"\nDry-run: {dry_run}. Files count: {len(WORKFLOW_REGISTRY)}")
-
-
-def _default_user_configurable(comfy: dict) -> list[str]:
-    """根据 comfy 配置推断默认的用户可编辑项。"""
-    items = ["comfy_seed", "comfy_translate", "comfy_prompt"]
-    if comfy.get("model_selectable", True):
-        items.append("comfy_model")
-    if comfy.get("width_node"):
-        items.extend(["comfy_width", "comfy_height"])
-    if comfy.get("output_type") == "video":
-        items.extend(["comfy_video_aspect", "comfy_video_resolution", "comfy_video_frames"])
-    if comfy.get("upscale_switch_node"):
-        items.append("comfy_upscale_enabled")
-    if comfy.get("pussydetailer_switch_node"):
-        items.append("comfy_pussydetailer_enabled")
-    if comfy.get("facedetailer_switch_node"):
-        items.append("comfy_facedetailer_enabled")
-    if comfy.get("lora_node"):
-        items.append("comfy_lora_variant")
-    if comfy.get("face_detailer_prompt_node"):
-        items.append("comfy_face_prompt")
-    if comfy.get("lora_enable_node"):
-        items.extend(["comfy_krea2_lora_enabled", "comfy_krea2_lora_strength"])
-    return items
 
 
 if __name__ == "__main__":

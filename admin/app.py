@@ -48,6 +48,14 @@ def generate_csrf_token():
 
 app.jinja_env.globals["csrf_token"] = generate_csrf_token
 
+
+@app.template_filter("formval")
+def formval_filter(v):
+    """渲染表单字段值：list/dict 序列化为 JSON（如 ["6","15"]），其余原样。"""
+    if isinstance(v, (list, dict)):
+        return json.dumps(v, ensure_ascii=False)
+    return "" if v is None else v
+
 def require_csrf(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -113,7 +121,13 @@ def detail_workflow(key: str):
         return "工作流不存在", 404
 
     with open(path, encoding="utf-8") as f:
-        data = json.load(f)
+        raw = f.read()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        # 展示解析错误和原始内容，让管理员能看到并修复
+        return render_template("detail.html", wf=None, raw_json=raw,
+                               parse_error=str(e), file_error=None, node_report=[])
 
     raw_json = json.dumps(data, ensure_ascii=False, indent=2)
 
@@ -130,7 +144,7 @@ def detail_workflow(key: str):
 
     return render_template("detail.html",
                            wf=data, raw_json=raw_json,
-                           file_error=file_error, node_report=node_report)
+                           parse_error=None, file_error=file_error, node_report=node_report)
 
 
 @app.route("/new", methods=["GET", "POST"])
@@ -180,8 +194,6 @@ def new_workflow():
 
 def _validate_form(form) -> str | None:
     """返回错误消息或 None。"""
-    import re
-
     if not form.get("menu_label", "").strip():
         return "菜单名称不能为空"
     if not form.get("menu_description", "").strip():
@@ -191,8 +203,8 @@ def _validate_form(form) -> str | None:
     wf_file = form.get("workflow_file", "").strip()
     if not wf_file:
         return "workflow_file 不能为空"
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+\.json", wf_file):
-        return "workflow_file 只能包含字母、数字、点、短横线、下划线，并以 .json 结尾"
+    if not wf_file.endswith(".json"):
+        return "workflow_file 必须以 .json 结尾"
     if "/" in wf_file or "\\" in wf_file or ".." in wf_file:
         return "workflow_file 不允许路径"
     if not (COMFY_WORKFLOW_DIR / wf_file).exists():
@@ -204,7 +216,7 @@ def _validate_form(form) -> str | None:
 @login_required
 @require_csrf
 def edit_workflow(key: str):
-    from admin.workflow_store import load_workflow, save_workflow, build_comfy_from_form
+    from admin.workflow_store import load_workflow, save_workflow, update_comfy_from_form
 
     data = load_workflow(key)
     if data is None:
@@ -212,25 +224,28 @@ def edit_workflow(key: str):
 
     error = None
     if request.method == "POST":
-        comfy = build_comfy_from_form(request.form)
-        comfy["workflow_file"] = request.form.get("workflow_file", "").strip()
-        comfy["is_img2img"] = request.form.get("is_img2img") == "true"
-        comfy["label"] = request.form.get("comfy_label", "").strip()
-        comfy["model_selectable"] = request.form.get("model_selectable") == "true"
+        error = _validate_form(request.form)
+        if not error:
+            comfy = data.setdefault("comfy", {})
+            # 部分更新：只覆盖表单渲染的字段，保留 lora/switch/prompt_optimize 等未渲染字段
+            update_comfy_from_form(comfy, request.form)
+            comfy["workflow_file"] = request.form.get("workflow_file", "").strip()
+            comfy["is_img2img"] = request.form.get("is_img2img") == "true"
+            comfy["label"] = request.form.get("comfy_label", "").strip()
+            comfy["model_selectable"] = request.form.get("model_selectable") == "true"
 
-        uc = request.form.getlist("user_configurable")
-        data["menu"] = {
-            "emoji": request.form.get("menu_emoji", "").strip(),
-            "label": request.form.get("menu_label", "").strip(),
-            "description": request.form.get("menu_description", "").strip(),
-            "how_to": request.form.get("menu_how_to", "").strip(),
-            "input_type": request.form.get("menu_input_type", "text"),
-            "backend": "comfyui",
-        }
-        data["comfy"] = comfy
-        data["user_configurable"] = uc
-        save_workflow(data)
-        return redirect(url_for("detail_workflow", key=key))
+            uc = request.form.getlist("user_configurable")
+            data["menu"] = {
+                "emoji": request.form.get("menu_emoji", "").strip(),
+                "label": request.form.get("menu_label", "").strip(),
+                "description": request.form.get("menu_description", "").strip(),
+                "how_to": request.form.get("menu_how_to", "").strip(),
+                "input_type": request.form.get("menu_input_type", "text"),
+                "backend": "comfyui",
+            }
+            data["user_configurable"] = uc
+            save_workflow(data)
+            return redirect(url_for("detail_workflow", key=key))
 
     return render_template("form.html", wf=data, error=error,
                            uc_options=_ALL_UC_OPTIONS)
@@ -242,6 +257,7 @@ ALL_UC_OPTIONS = [
     "comfy_facedetailer_enabled", "comfy_lora_variant", "comfy_face_prompt",
     "comfy_prompt", "comfy_video_aspect", "comfy_video_resolution",
     "comfy_video_frames", "comfy_krea2_lora_enabled", "comfy_krea2_lora_strength",
+    "comfy_prompt_optimize",
 ]
 _ALL_UC_OPTIONS = ALL_UC_OPTIONS
 
@@ -251,7 +267,10 @@ _ALL_UC_OPTIONS = ALL_UC_OPTIONS
 @require_csrf
 def disable_handler(key: str):
     from admin.workflow_store import disable_workflow
-    disable_workflow(key)
+    try:
+        disable_workflow(key)
+    except FileNotFoundError:
+        return "工作流不存在", 404
     return redirect(url_for("list_workflows"))
 
 
@@ -260,7 +279,10 @@ def disable_handler(key: str):
 @require_csrf
 def enable_handler(key: str):
     from admin.workflow_store import enable_workflow
-    enable_workflow(key)
+    try:
+        enable_workflow(key)
+    except FileNotFoundError:
+        return "工作流不存在", 404
     return redirect(url_for("list_workflows"))
 
 
@@ -269,7 +291,10 @@ def enable_handler(key: str):
 @require_csrf
 def archive_handler(key: str):
     from admin.workflow_store import archive_workflow
-    archive_workflow(key)
+    try:
+        archive_workflow(key)
+    except FileNotFoundError:
+        return "工作流不存在", 404
     return redirect(url_for("list_workflows"))
 
 
@@ -303,10 +328,17 @@ def api_upload_comfy_workflow():
     dest_dir = COMFY_WORKFLOW_DIR
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / filename_str
-    tmp = dest.with_suffix(".json.tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    tmp.replace(dest)
+    # tmp 名唯一化，避免并发上传同名文件时互相覆盖
+    import tempfile
+    tmp = tempfile.NamedTemporaryFile(
+        "w", dir=dest_dir, delete=False, suffix=".tmp", encoding="utf-8")
+    try:
+        with tmp:
+            json.dump(data, tmp, ensure_ascii=False, indent=2)
+        os.replace(tmp.name, dest)
+    except Exception:
+        Path(tmp.name).unlink(missing_ok=True)
+        raise
 
     node_count = len(data)
     return {"ok": True, "filename": filename_str, "nodes": node_count}
@@ -335,7 +367,7 @@ def api_validate_mapping():
         "width_node", "width_key", "height_node", "height_key",
         "video_width_node", "video_width_key", "video_height_node",
         "video_height_key", "video_frames_node", "video_frames_key",
-        "load_image_node", "load_image_key",
+        "load_image_node", "load_image_key", "load_image_nodes",
         "upscale_switch_node", "upscale_switch_key",
         "upscale_switch_on", "upscale_switch_off",
         "pussydetailer_switch_node", "pussydetailer_switch_key",

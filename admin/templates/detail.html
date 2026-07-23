@@ -1,6 +1,16 @@
 {% extends "base.html" %}
-{% block title %}详情 — {{ wf.key }}{% endblock %}
+{% block title %}详情 — {{ wf.key if wf else "配置错误" }}{% endblock %}
 {% block content %}
+{% if parse_error %}
+<h2>配置解析失败</h2>
+<p style="color:red;">⚠️ JSON 解析错误: {{ parse_error }}</p>
+<p>请直接编辑该文件修复后刷新本页。</p>
+
+<h3 style="margin-top:20px;">原始内容</h3>
+<pre style="background:#f8f8f8; padding:15px; border-radius:4px; overflow-x:auto; max-height:400px;">{{ raw_json }}</pre>
+
+<a href="/" class="btn btn-primary" style="margin-top:20px;">返回列表</a>
+{% else %}
 <h2>{{ wf.menu.emoji }} {{ wf.menu.label }}</h2>
 <p>{{ wf.menu.description }}</p>
 
@@ -42,4 +52,5 @@
 <pre style="background:#f8f8f8; padding:15px; border-radius:4px; overflow-x:auto; max-height:400px;">{{ raw_json }}</pre>
 
 <a href="/" class="btn btn-primary" style="margin-top:20px;">返回列表</a>
+{% endif %}
 {% endblock %}

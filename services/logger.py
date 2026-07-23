@@ -7,7 +7,7 @@ def setup_logging(level: str = "INFO", log_dir: str = "logs") -> None:
     Path(log_dir).mkdir(parents=True, exist_ok=True)
 
     root = logging.getLogger()
-    root.setLevel(getattr(logging, level.upper()))
+    root.setLevel(getattr(logging, level.strip().upper(), logging.INFO))
 
     if root.handlers:
         root.handlers.clear()

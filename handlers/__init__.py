@@ -16,9 +16,8 @@ def is_authorized(user_id: int, chat_id: int, chat_type: str) -> bool:
     规则：
     1. ADMIN_USER_ID 自动通过用户白名单，无需出现在 ALLOWED_USER_IDS 中
     2. ALLOWED_USER_IDS 非空时，普通用户必须在白名单中
-    3. 群白名单仅用于 group/supergroup，private 不检查
-    4. ALLOWED_CHAT_IDS 非空时，chat_id 必须在白名单中
-    5. 管理员同样受群白名单限制
+    3. 群白名单仅对 group/supergroup 生效，private 聊天不检查 chat_id
+    4. 管理员同样受群白名单限制
     """
     # 用户白名单
     if ADMIN_USER_ID is not None and user_id == ADMIN_USER_ID:

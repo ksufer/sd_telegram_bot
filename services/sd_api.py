@@ -9,6 +9,10 @@ from config import SD_API_BASE, SAMPLER_PRESETS
 logger = logging.getLogger(__name__)
 
 
+class SdApiError(Exception):
+    """SD WebUI API 错误（响应结构异常）。"""
+
+
 async def get_models() -> list[dict]:
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.get(f"{SD_API_BASE}/sdapi/v1/sd-models")
@@ -20,7 +24,13 @@ async def get_current_model() -> str:
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.get(f"{SD_API_BASE}/sdapi/v1/options")
         r.raise_for_status()
-        return r.json()["sd_model_checkpoint"]
+        data = r.json()
+        checkpoint = data.get("sd_model_checkpoint") if isinstance(data, dict) else None
+        if not checkpoint:
+            raise SdApiError(
+                f"SD WebUI /options 响应缺少 sd_model_checkpoint: {str(data)[:200]}"
+            )
+        return checkpoint
 
 
 async def set_model(model_name: str) -> dict:
@@ -85,7 +95,11 @@ async def txt2img(params: dict, progress_callback=None) -> tuple[bytes, int]:
         r = await post_task
         r.raise_for_status()
         data = r.json()
-        img_base64 = data["images"][0]
+        images = data.get("images") if isinstance(data, dict) else None
+        if not images:
+            # SD WebUI 出错时返回结构不同（如 {"error": ..., "detail": ...}）
+            raise SdApiError(f"SD WebUI txt2img 响应缺少 images: {str(data)[:200]}")
+        img_base64 = images[0]
         seed = _extract_seed(data, params.get("seed", -1))
         return base64.b64decode(img_base64), seed
 

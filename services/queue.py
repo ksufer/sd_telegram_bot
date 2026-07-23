@@ -7,7 +7,9 @@ import time
 import uuid
 from dataclasses import dataclass
 
-from config import HIRES_FIX_PARAMS, COMFY_WORKFLOWS, LOG_FULL_PROMPT, DEFAULT_PROMPT_PREFIX
+import telegram.error
+
+from config import HIRES_FIX_PARAMS, LOG_FULL_PROMPT, DEFAULT_PROMPT_PREFIX
 from config import COMFY_VIDEO_ASPECTS, COMFY_VIDEO_RESOLUTIONS, COMFY_VIDEO_FRAMES_PRESETS
 from services import sd_api, comfy_api, credits
 from services.network import is_network_error, retry_on_network_error
@@ -102,11 +104,39 @@ class GenerationQueue:
         return ahead
 
     async def stop_worker(self):
+        # 先同步排空队列（无 await，不会与 worker 竞争）：pending 任务重启后会丢失，
+        # 需在取消 worker 前取出，事后统一退款并告知
+        pending_tasks = []
+        while True:
+            try:
+                pending_tasks.append(self._queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        for _ in pending_tasks:
+            self._queue.task_done()
+
         if self._worker_task and not self._worker_task.done():
             self._worker_task.cancel()
             try:
                 await self._worker_task
             except asyncio.CancelledError:
+                pass
+
+        # 退款并尽力告知（此时 worker 已停，发消息失败则忽略）
+        for pending in pending_tasks:
+            if pending.credit_charged:
+                try:
+                    await credits.refund_one(pending.user_id)
+                    pending.credit_charged = False
+                except Exception:
+                    logger.error("pending 任务退款失败: user=%s",
+                                 pending.user_id, exc_info=True)
+            try:
+                await self._app.bot.send_message(
+                    chat_id=pending.chat_id,
+                    text="Bot 正在重启，排队中的生成任务已取消并退还额度，请重新提交。",
+                )
+            except Exception:
                 pass
         logger.info("Worker 已停止")
 
@@ -193,8 +223,9 @@ class GenerationQueue:
 
         # ComfyUI 路径
         await updater.set_stage("正在生成（ComfyUI）...")
-        wf_key = settings.get("comfy_workflow", "")
-        wf_config = COMFY_WORKFLOWS.get(wf_key, {})
+        # 用户保存的 workflow key 可能已被管理面板删除，解析为实际生效的 key/config
+        # （与 comfy_api.generate 内部回退保持一致）
+        _, wf_config = comfy_api._get_wf_config(settings)
         seed = int(settings.get("comfy_seed", -1))
         if seed == -1:
             seed = random.randint(0, 1125899906842624)
@@ -237,9 +268,37 @@ class GenerationQueue:
     async def _send_result(self, task: GenerationTask, raw_data,
                            info: str, reply_markup,
                            wf_config: dict,
-                           updater: ThrottledProgressUpdater) -> None:
-        """发送图片/视频结果（含重试、fallback、网络错误退款）。内部完整保留原发送失败退款逻辑。"""
+                           updater: ThrottledProgressUpdater) -> bool:
+        """发送图片/视频结果（含重试、fallback、失败退款）。
+
+        返回 True 表示发送成功；失败时已退款并尽力通过状态消息告知用户，返回 False。
+        """
+        try:
+            await self._send_media(task, raw_data, info, reply_markup,
+                                   wf_config, updater)
+            return True
+        except Exception as e:
+            if _is_reply_not_found(e) and (task.reply_to_message_id
+                                           or task.original_message_id):
+                # 被回复的原消息已被删除：去掉 reply_to 整体重试一次
+                logger.info("reply_to 目标消息不存在，改为不回复重发: %s", e)
+                task.reply_to_message_id = None
+                task.original_message_id = None
+                try:
+                    await self._send_media(task, raw_data, info, reply_markup,
+                                           wf_config, updater)
+                    return True
+                except Exception as e2:
+                    e = e2
+            return await self._handle_send_failure(task, e, wf_config)
+
+    async def _send_media(self, task: GenerationTask, raw_data,
+                          info: str, reply_markup,
+                          wf_config: dict,
+                          updater: ThrottledProgressUpdater) -> None:
+        """实际发送图片/视频（视频失败时 fallback 到 send_document）。失败抛异常。"""
         is_video = wf_config.get("output_type") == "video"
+        reply_to = task.reply_to_message_id or task.original_message_id
 
         if is_video:
             _filename = raw_data.filename
@@ -252,7 +311,7 @@ class GenerationQueue:
                         filename=_filename,
                         caption=info,
                         parse_mode="HTML",
-                        reply_to_message_id=task.reply_to_message_id or task.original_message_id,
+                        reply_to_message_id=reply_to,
                         reply_markup=reply_markup,
                         supports_streaming=True,
                     ),
@@ -260,58 +319,73 @@ class GenerationQueue:
                         f"视频发送失败，正在重试 ({attempt}/{max_retries})..."
                     ),
                 )
-            except Exception as e:
+            except Exception:
                 logger.exception("send_video 失败，fallback 到 send_document")
-                _fallback_info = info + "\n（视频无法直接播放，已改为文件发送）"
-                try:
-                    await retry_on_network_error(
-                        lambda: self._app.bot.send_document(
-                            chat_id=task.chat_id,
-                            document=io.BytesIO(data),
-                            filename=_filename,
-                            caption=_fallback_info,
-                            parse_mode="HTML",
-                            reply_to_message_id=task.reply_to_message_id or task.original_message_id,
-                            reply_markup=reply_markup,
-                        ),
-                    )
-                except Exception as e2:
-                    if is_network_error(e2):
-                        logger.error("视频文件发送失败（网络错误）: %s", e2)
-                        if task.credit_charged:
-                            await credits.refund_one(task.user_id)
-                        await self._update_status(
-                            task, "网络不稳定，视频发送失败，已退还额度。请稍后重试。"
-                        )
-                        return
-                    raise
-        else:
-            try:
+                # info 已是转义后的 HTML（长度 <= CAPTION_LIMIT），拼后缀前需截断
+                suffix = "\n（视频无法直接播放，已改为文件发送）"
+                fallback_info = (_truncate_escaped(info, CAPTION_LIMIT - len(suffix))
+                                 + suffix)
                 await retry_on_network_error(
-                    lambda: self._app.bot.send_photo(
+                    lambda: self._app.bot.send_document(
                         chat_id=task.chat_id,
-                        photo=io.BytesIO(raw_data),
-                        caption=info,
+                        document=io.BytesIO(data),
+                        filename=_filename,
+                        caption=fallback_info,
                         parse_mode="HTML",
-                        reply_to_message_id=task.reply_to_message_id or task.original_message_id,
+                        reply_to_message_id=reply_to,
                         reply_markup=reply_markup,
                     ),
-                    on_retry=lambda attempt, max_retries: updater.set_stage(
-                        f"图片发送失败，正在重试 ({attempt}/{max_retries})..."
-                    ),
                 )
-            except Exception as e:
-                if is_network_error(e):
-                    logger.error("图片发送失败（网络错误，已重试3次）: %s", e)
-                    if task.credit_charged:
-                        await credits.refund_one(task.user_id)
-                    await self._update_status(
-                        task, "网络不稳定，图片发送失败，已退还额度。请稍后重试。"
-                    )
-                    return
-                raise
+        else:
+            await retry_on_network_error(
+                lambda: self._app.bot.send_photo(
+                    chat_id=task.chat_id,
+                    photo=io.BytesIO(raw_data),
+                    caption=info,
+                    parse_mode="HTML",
+                    reply_to_message_id=reply_to,
+                    reply_markup=reply_markup,
+                ),
+                on_retry=lambda attempt, max_retries: updater.set_stage(
+                    f"图片发送失败，正在重试 ({attempt}/{max_retries})..."
+                ),
+            )
+
+    async def _handle_send_failure(self, task: GenerationTask, e: Exception,
+                                   wf_config: dict) -> bool:
+        """生成成功但发送失败：统一退款并尽力告知用户。
+
+        无论网络错误还是 BadRequest/Forbidden 等永久错误都退款（退款后 credit_charged
+        置 False 防止重复退款）；Forbidden（用户拉黑 Bot）时状态消息同样发不出，仅退款即可。
+        """
+        media = "视频" if wf_config.get("output_type") == "video" else "图片"
+        if is_network_error(e):
+            logger.error("%s发送失败（网络错误）: %s", media, e)
+            hint = f"网络不稳定，{media}发送失败，已退还额度。请稍后重试。"
+        else:
+            logger.error("%s发送失败: %s", media, e, exc_info=True)
+            hint = f"{media}发送失败，已退还额度。请稍后重试。"
+        if task.credit_charged:
+            await credits.refund_one(task.user_id)
+            task.credit_charged = False
+        await self._update_status(task, hint)
+        return False
 
     async def _process_task(self, task: GenerationTask):
+        """处理入口：停机/重启导致任务被取消（CancelledError）时退还已扣额度。"""
+        try:
+            await self._do_process_task(task)
+        except asyncio.CancelledError:
+            if task.credit_charged:
+                try:
+                    await credits.refund_one(task.user_id)
+                    task.credit_charged = False
+                except Exception:
+                    logger.error("取消任务退款失败: user=%s",
+                                 task.user_id, exc_info=True)
+            raise
+
+    async def _do_process_task(self, task: GenerationTask):
         settings = task.settings
         backend = settings.get("backend", "sd")
         start_time = time.monotonic()
@@ -319,44 +393,47 @@ class GenerationQueue:
             self._app, task.chat_id, task.status_message_id
         )
 
-        # 翻译 + 生成（此阶段失败退款）
+        # 翻译 + 生成 + 结果信息构建（此阶段失败退款；发送阶段失败在 _send_result 内退款）
         try:
             translated = await self._translate_prompt(task, updater)
             raw_data, actual_seed, wf_config, optimized_prompt = await self._generate(
                 task, translated, updater)
+
+            # 优化提示词可用时，替代 translated 用于显示和缓存
+            display_prompt = optimized_prompt or translated
+
+            # 缓存生成上下文
+            context_id = self._cache_gen_context(task, display_prompt, actual_seed)
+
+            # 构建结果信息和菜单
+            await updater.set_stage("正在发送...")
+            elapsed = time.monotonic() - start_time
+
+            if backend == "sd":
+                info = _build_sd_info(settings, translated, actual_seed, elapsed)
+                reply_markup = generation_menu(context_id)
+            else:
+                info = _build_comfy_info(task, settings, display_prompt, actual_seed,
+                                         elapsed, wf_config)
+                reply_markup = comfy_generation_menu(context_id, settings=settings)
+                if wf_config.get("output_type") != "video":
+                    raw_data = raw_data.data  # 图片：提取 bytes；视频：保留 ComfyOutput 供 _send_result 取 .filename
+
+            if task.credit_charged:
+                remaining = await credits.get_remaining(task.user_id)
+                info += f"\n<b>剩余额度:</b> {remaining}"
         except Exception:
             if task.credit_charged:
                 await credits.refund_one(task.user_id)
+                task.credit_charged = False
             raise
 
-        # 优化提示词可用时，替代 translated 用于显示和缓存
-        display_prompt = optimized_prompt or translated
-
-        # 缓存生成上下文
-        context_id = self._cache_gen_context(task, display_prompt, actual_seed)
-
-        # 构建结果信息和菜单
-        await updater.set_stage("正在发送...")
-        elapsed = time.monotonic() - start_time
-
-        if backend == "sd":
-            info = _build_sd_info(settings, translated, actual_seed, elapsed)
-            reply_markup = generation_menu(context_id)
-        else:
-            info = _build_comfy_info(task, settings, display_prompt, actual_seed, elapsed)
-            reply_markup = comfy_generation_menu(context_id, settings=settings)
-            if wf_config.get("output_type") != "video":
-                raw_data = raw_data.data  # 图片：提取 bytes；视频：保留 ComfyOutput 供 _send_result 取 .filename
-
-        if task.credit_charged:
-            remaining = await credits.get_remaining(task.user_id)
-            info += f"\n<b>剩余额度:</b> {remaining}"
-
-        # 发送结果（内部完全保留原发送阶段退款逻辑）
-        await self._send_result(task, raw_data, info, reply_markup, wf_config, updater)
+        # 发送结果（失败时已退款并告知用户，保留状态消息作为告知渠道）
+        sent = await self._send_result(task, raw_data, info, reply_markup,
+                                       wf_config, updater)
 
         # 清理状态消息
-        if task.status_message_id is not None:
+        if sent and task.status_message_id is not None:
             try:
                 await self._app.bot.delete_message(
                     chat_id=task.chat_id,
@@ -423,15 +500,16 @@ CAPTION_LIMIT = 1024
 CAPTION_MARGIN = 32
 
 
-def _escape_and_truncate(text: str, max_chars: int) -> str:
-    """HTML 转义并截断，保证返回值长度 <= max_chars 且不切断实体。
+def _is_reply_not_found(exc: Exception) -> bool:
+    """BadRequest "replied message not found"：被回复的原消息已被删除。"""
+    return (isinstance(exc, telegram.error.BadRequest)
+            and "replied message not found" in str(exc).lower())
 
-    截断在转义后进行，因此 max_chars 按最终发送长度计算，
-    不受 escape 膨胀（& → &amp; 等）影响。
-    """
+
+def _truncate_escaped(escaped: str, max_chars: int) -> str:
+    """截断已转义的 HTML 文本，保证 <= max_chars 且不切断实体。"""
     if max_chars < 1:
         return ""
-    escaped = html.escape(text)
     if len(escaped) <= max_chars:
         return escaped
     seg = escaped[:max_chars - 1]
@@ -439,6 +517,15 @@ def _escape_and_truncate(text: str, max_chars: int) -> str:
     if seg.rfind("&") > seg.rfind(";"):
         seg = seg[:seg.rfind("&")]
     return seg + "…"
+
+
+def _escape_and_truncate(text: str, max_chars: int) -> str:
+    """HTML 转义并截断，保证返回值长度 <= max_chars 且不切断实体。
+
+    截断在转义后进行，因此 max_chars 按最终发送长度计算，
+    不受 escape 膨胀（& → &amp; 等）影响。
+    """
+    return _truncate_escaped(html.escape(text), max_chars)
 
 
 def _build_sd_info(settings: dict, translated: str, seed: int, elapsed: float) -> str:
@@ -455,8 +542,8 @@ def _build_sd_info(settings: dict, translated: str, seed: int, elapsed: float) -
     )
 
 
-def _build_comfy_info(task, settings: dict, translated: str, seed: int, elapsed: float) -> str:
-    wf_config = COMFY_WORKFLOWS.get(settings.get("comfy_workflow", ""), {})
+def _build_comfy_info(task, settings: dict, translated: str, seed: int,
+                      elapsed: float, wf_config: dict) -> str:
     is_video = wf_config.get("output_type") == "video"
     model_selectable = wf_config.get("model_selectable", True)
 

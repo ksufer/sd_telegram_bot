@@ -1,5 +1,6 @@
 """ComfyUI 专属设置菜单 — 模型、种子、分辨率、翻译开关。"""
 
+import html
 import logging
 
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
@@ -13,6 +14,7 @@ from handlers import auth_callback
 from handlers.settings import _ensure_settings, _save_settings
 from handlers.common import safe_answer, reply_menu, get_user_id
 from services import comfy_api
+from services.queue import _escape_and_truncate
 from ui.keyboards import comfy_generation_menu, build_toggle_row
 
 logger = logging.getLogger(__name__)
@@ -154,15 +156,13 @@ def _add_middle_rows(keyboard: list, info_lines: list,
     if _can_config_face_prompt(wf_config, uc):
         face_value = settings.get("comfy_face_prompt", "")
         if face_value:
-            info_lines.append(
-                f"脸部提示词: {face_value[:60]}{'...' if len(face_value) > 60 else ''}"
-            )
+            info_lines.append(f"脸部提示词: {_escape_and_truncate(face_value, 60)}")
         else:
             info_lines.append("脸部提示词: 🤖 自动提取")
         keyboard.append([
             InlineKeyboardButton("✏️ 脸部提示词", callback_data="comfy_face_prompt_set"),
         ])
-    if settings.get("comfy_face_prompt"):
+    if _can_config_face_prompt(wf_config, uc) and settings.get("comfy_face_prompt"):
         keyboard.append([
             InlineKeyboardButton("🗑 清除脸部提示词",
                                  callback_data="comfy_face_prompt_clear"),
@@ -180,7 +180,7 @@ def _comfy_settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
     model_selectable = _can_config_model(wf_config, uc)
 
     seed_label = "随机" if seed == -1 else str(seed)
-    prompt_preview = comfy_prompt[:30] + "..." if comfy_prompt else "（使用默认）"
+    prompt_preview = _escape_and_truncate(comfy_prompt, 30) if comfy_prompt else "（使用默认）"
     translate_label = "ON" if translate else "OFF"
 
     # 信息文本逐行收集
@@ -189,7 +189,7 @@ def _comfy_settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
         f"Workflow: {wf_config.get('label', wf_key)}",
     ]
     if model_selectable:
-        info_lines.append(f"模型: <code>{model}</code>")
+        info_lines.append(f"模型: <code>{html.escape(str(model))}</code>")
     info_lines.append(f"种子: {seed_label}")
     info_lines.append(f"翻译: {translate_label}")
     info_lines.append(f"Prompt: {prompt_preview}")
@@ -239,7 +239,8 @@ def _comfy_settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
 
 def _comfy_workflow_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
     current = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
-    text = f"<b>选择 Workflow</b>\n当前: {COMFY_WORKFLOWS.get(current, {}).get('label', current)}"
+    current_label = html.escape(str(COMFY_WORKFLOWS.get(current, {}).get("label", current)))
+    text = f"<b>选择 Workflow</b>\n当前: {current_label}"
 
     keyboard = []
     for key, wf in COMFY_WORKFLOWS.items():
@@ -256,7 +257,7 @@ def _comfy_model_menu(settings: dict, models: list[str]) -> tuple[str, InlineKey
     wf_key = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
     wf_config = _get_workflow_config(wf_key)
     current = settings.get("comfy_model", wf_config.get("default_model", "?"))
-    text = f"<b>选择模型</b>\n当前: <code>{current}</code>"
+    text = f"<b>选择模型</b>\n当前: <code>{html.escape(str(current))}</code>"
 
     keyboard = []
     for i, name in enumerate(models):
@@ -318,7 +319,9 @@ async def show_comfy_model_menu(update, context):
         return
 
     # 用 context.user_data 暂存模型列表供 pick 使用（避免 callback data 超长）
+    # 同时记录打开菜单时的 workflow，防止切 workflow 后旧菜单写错模型
     context.user_data["_comfy_models"] = models
+    context.user_data["_comfy_models_wf"] = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
 
     text, markup = _comfy_model_menu(settings, models)
     await reply_menu(query, text, markup)
@@ -327,16 +330,25 @@ async def show_comfy_model_menu(update, context):
 async def pick_comfy_model(update, context):
     """根据索引选择模型。"""
     query = update.callback_query
+    user_id = get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+
+    # 模型列表按打开菜单时的 workflow 缓存，切换 workflow 后旧菜单作废
+    current_wf = settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW)
+    if context.user_data.get("_comfy_models_wf") != current_wf:
+        await safe_answer(query, "模型列表已过期，请重新打开模型菜单", show_alert=True)
+        return
+
     models = context.user_data.get("_comfy_models", [])
     try:
         idx = int(query.data.split(":", 1)[1])
+        if not 0 <= idx < len(models):
+            raise IndexError
         model_name = models[idx]
     except (IndexError, ValueError):
         await safe_answer(query, "无效的模型选择", show_alert=True)
         return
 
-    user_id = get_user_id(update)
-    settings = _ensure_settings(context, user_id)
     settings["comfy_model"] = model_name
     _save_settings(context, user_id)
 
@@ -416,6 +428,12 @@ async def pick_comfy_workflow(update, context):
     settings["comfy_model"] = wf_config.get("default_model", "")
     _save_settings(context, user_id)
 
+    # 清除 firstlast-video 多步交互状态（切换工作流时重置）
+    # 注：generation 已 import 本模块，无法反向 import _clear_firstlast_state，就地清理
+    if context.user_data:
+        context.user_data.pop("_firstlast_start_frame", None)
+        context.user_data.pop("_firstlast_end_frame", None)
+
     await safe_answer(query, f"Workflow: {wf_config['label']}")
     text, markup = _comfy_settings_menu(settings)
     await reply_menu(query, text, markup)
@@ -457,12 +475,10 @@ async def toggle_comfy_translate(update, context):
 async def reuse_comfy_seed(update, context):
     """从 context_id 缓存读取 actual_seed，写入 comfy_seed。"""
     query = update.callback_query
-    await safe_answer(query)
-
     context_id = query.data.replace("comfy_reuse_seed_", "")
     gen_ctx = context.bot_data.get("_gen_context", {}).get(context_id)
     if gen_ctx is None:
-        await query.answer("未找到本次 Seed，请重新生成。", show_alert=True)
+        await safe_answer(query, "未找到本次 Seed，请重新生成。", show_alert=True)
         return
 
     user_id = get_user_id(update)
@@ -470,7 +486,8 @@ async def reuse_comfy_seed(update, context):
     settings["comfy_seed"] = gen_ctx["seed"]
     _save_settings(context, user_id)
 
-    await query.answer(f"Seed 已固定为 {gen_ctx['seed']}，下次生成将复用。", show_alert=True)
+    await safe_answer(query, f"Seed 已固定为 {gen_ctx['seed']}，下次生成将复用。",
+                      show_alert=True)
 
 
 async def random_comfy_seed(update, context):
@@ -717,10 +734,26 @@ async def pick_comfy_lora_variant_fast(update, context):
 
 
 
+def _extract_seed_context_id(query) -> str | None:
+    """从当前消息键盘解析 comfy_reuse_seed_ 按钮携带的 context_id。"""
+    markup = query.message.reply_markup
+    if markup:
+        for row in markup.inline_keyboard:
+            for btn in row:
+                data = btn.callback_data or ""
+                if data.startswith("comfy_reuse_seed_"):
+                    return data.replace("comfy_reuse_seed_", "")
+    return None
+
+
 async def _update_gen_keyboard(query, settings):
     """刷新生成后菜单键盘（各 fast handler 公用）。"""
-    markup = comfy_generation_menu(context_id="", settings=settings,
-                                   include_seed_buttons=False)
+    context_id = _extract_seed_context_id(query)
+    if context_id is None:
+        markup = comfy_generation_menu(context_id="", settings=settings,
+                                       include_seed_buttons=False)
+    else:
+        markup = comfy_generation_menu(context_id, settings=settings)
     try:
         await query.message.edit_reply_markup(markup)
     except Exception:

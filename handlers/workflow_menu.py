@@ -1,5 +1,6 @@
 """工作流导向主菜单 — /start、工作流说明页、帮助面板。"""
 
+import html
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -107,6 +108,7 @@ async def main_menu_callback(update, context):
     """回调返回主菜单。"""
     query = update.callback_query
     await safe_answer(query)
+    refresh_workflows()
     text, markup = _build_main_menu()
     await reply_menu(query, text, markup)
 
@@ -126,7 +128,7 @@ def _build_workflow_detail(workflow_entry: dict, settings: dict) -> tuple[str, I
     parts = []
     if wf_config.get("model_selectable", True):
         model = settings.get("comfy_model", wf_config.get("default_model", "?"))
-        parts.append(f"模型={model}")
+        parts.append(f"模型={html.escape(str(model))}")
     if not wf_config.get("is_img2img", False):
         w = settings.get("comfy_width", 768)
         h = settings.get("comfy_height", 1280)

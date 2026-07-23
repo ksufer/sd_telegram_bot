@@ -25,6 +25,13 @@ def load(user_id: int, defaults: dict) -> dict:
         logger.warning("加载用户 %s 设置失败: %s，使用默认配置", user_id, e)
         return copy.deepcopy(defaults)
 
+    if not isinstance(data, dict):
+        logger.warning(
+            "用户 %s 设置文件结构非法（期望 dict，实际 %s），使用默认配置",
+            user_id, type(data).__name__,
+        )
+        return copy.deepcopy(defaults)
+
     # 浅合并：用文件值覆盖默认值，补全未来新增的字段
     # 当前 settings 为一层 dict；若未来出现嵌套结构再考虑 deep merge
     merged = copy.deepcopy(defaults)

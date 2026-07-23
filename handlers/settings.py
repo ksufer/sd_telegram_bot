@@ -1,3 +1,4 @@
+import html
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -6,6 +7,7 @@ from telegram.ext import CallbackQueryHandler
 
 from config import SIZE_PRESETS, DEFAULT_USER_SETTINGS
 from services import sd_api, storage
+from services.queue import _escape_and_truncate
 from handlers import _user_auth_filter, auth_callback
 from handlers.common import safe_answer, reply_menu, get_user_id
 
@@ -16,16 +18,14 @@ logger = logging.getLogger(__name__)
 
 def _settings_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
     size_label = f"{settings['width']} × {settings['height']}"
-    model_label = settings["model"] or "默认"
-    if len(model_label) > 22:
-        model_label = model_label[:19] + "..."
+    model_label = _escape_and_truncate(settings["model"] or "默认", 22)
 
     hires_icon = "已启用" if settings["hires_fix"] else "已关闭"
     translate_icon = "已启用" if settings["translate"] else "已关闭"
     restore_icon = "已启用" if settings.get("restore_faces") else "已关闭"
     tiling_icon = "已启用" if settings.get("tiling") else "已关闭"
     seed_label = str(settings["seed"]) if settings["seed"] != -1 else "随机"
-    sampler_label = settings.get("sampler", "Euler a")
+    sampler_label = html.escape(settings.get("sampler", "Euler a"))
     clip_skip_label = str(settings.get("clip_skip", 1))
 
     text = (
@@ -106,7 +106,7 @@ def _size_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
 
 def _model_menu(settings: dict, models: list[dict]) -> tuple[str, InlineKeyboardMarkup]:
     current = settings["model"]
-    text = f"<b> 选择模型</b>\n当前：<code>{current or '默认'}</code>"
+    text = f"<b> 选择模型</b>\n当前：<code>{html.escape(current or '默认')}</code>"
 
     keyboard = []
     for i, m in enumerate(models):
@@ -124,7 +124,7 @@ def _model_menu(settings: dict, models: list[dict]) -> tuple[str, InlineKeyboard
 
 def _sampler_menu(settings: dict, samplers: list[str]) -> tuple[str, InlineKeyboardMarkup]:
     current = settings.get("sampler", "Euler a")
-    text = f"<b> 选择采样器</b>\n当前：<code>{current}</code>"
+    text = f"<b> 选择采样器</b>\n当前：<code>{html.escape(current)}</code>"
 
     keyboard = []
     for name in samplers:
@@ -212,12 +212,19 @@ async def show_size_menu(update, context):
 
 async def pick_size(update, context):
     query = update.callback_query
-    data = query.data
-    w, h = data.replace("pick_size_", "").split("x")
+    try:
+        w, h = query.data.replace("pick_size_", "").split("x")
+        w, h = int(w), int(h)
+    except ValueError:
+        await safe_answer(query, "无效的尺寸选择", show_alert=True)
+        return
+    if (w, h) not in SIZE_PRESETS.values():
+        await safe_answer(query, "无效的尺寸选择", show_alert=True)
+        return
     user_id = get_user_id(update)
     settings = _ensure_settings(context, user_id)
-    settings["width"] = int(w)
-    settings["height"] = int(h)
+    settings["width"] = w
+    settings["height"] = h
     _save_settings(context, user_id)
     await safe_answer(query, f"已切换至 {w} × {h}")
     text, markup = _settings_menu(settings)
@@ -305,7 +312,11 @@ async def start_seed_input(update, context):
 async def close_menu(update, context):
     query = update.callback_query
     await safe_answer(query,)
-    await query.delete_message()
+    try:
+        await query.delete_message()
+    except Exception:
+        # 超过 48 小时的消息无法删除，忽略即可（已 answer）
+        pass
 
 
 # ═══ Steps/CFG 回调 ═══

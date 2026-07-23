@@ -29,6 +29,9 @@ async def safe_answer(query, text: str | None = None, show_alert: bool = False):
 async def reply_menu(query, text: str, markup):
     try:
         await query.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
-    except BadRequest:
+    except BadRequest as e:
+        # 内容未变化（如点选已选中项）不算错误，直接忽略，避免重复发菜单
+        if "not modified" in str(e).lower():
+            return
         await safe_answer(query)
         await query.message.reply_text(text, reply_markup=markup, parse_mode="HTML")

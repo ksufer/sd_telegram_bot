@@ -5,4 +5,9 @@ services:
     environment:
       PROXY_URL: socks5://host.docker.internal:10808
       COMFY_API_BASE: http://host.docker.internal:8188
-  sd-admin: {}
+  sd-admin:
+    # 新 Admin 需在网页端调用 ComfyUI 生成，与 bot 走同一入口
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      COMFY_API_BASE: http://host.docker.internal:8188

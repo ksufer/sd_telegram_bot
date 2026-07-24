@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SD Admin</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- 登录卡片 -->
+<div id="login-view" class="login-view hidden">
+  <form id="login-form" class="login-card" autocomplete="off">
+    <h1>SD Admin</h1>
+    <p class="login-sub">请输入管理员密码</p>
+    <input type="password" id="login-password" class="ctl" placeholder="密码"
+           autocomplete="current-password">
+    <div id="login-error" class="login-error"></div>
+    <button type="submit" id="login-btn" class="btn btn-primary btn-block">登录</button>
+  </form>
+</div>
+
+<!-- 主界面 -->
+<div id="app" class="hidden">
+  <header class="topbar">
+    <div class="brand">SD Admin</div>
+    <nav class="tabs">
+      <button class="tab active" data-tab="generate" type="button">生成</button>
+      <button class="tab" data-tab="history" type="button">历史</button>
+      <button class="tab" data-tab="workflows" type="button">工作流</button>
+    </nav>
+    <button id="logout-btn" class="btn btn-ghost" type="button">退出登录</button>
+  </header>
+
+  <main>
+    <!-- Tab 1：生成 -->
+    <section id="tab-generate" class="tab-panel">
+      <div class="gen-layout">
+        <aside class="wf-list-panel">
+          <div class="panel-title">工作流</div>
+          <div id="wf-list" class="wf-list"></div>
+        </aside>
+        <div class="gen-main">
+          <div id="wf-info"></div>
+          <div id="gen-inputs" class="card"></div>
+          <div id="gen-params"></div>
+          <div class="gen-actions">
+            <button id="generate-btn" class="btn btn-primary" type="button">生成</button>
+            <button id="cancel-poll-btn" class="btn btn-ghost hidden" type="button">取消轮询</button>
+          </div>
+          <div id="gen-progress" class="gen-progress hidden">
+            <div class="progress-line">
+              <span id="gen-stage"></span>
+              <span id="gen-stopwatch" class="mono"></span>
+            </div>
+            <div class="progress-bar"><div class="progress-bar-indeterminate"></div></div>
+          </div>
+          <div id="gen-result"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 2：历史 -->
+    <section id="tab-history" class="tab-panel hidden">
+      <div id="history-grid" class="history-grid"></div>
+      <div id="history-empty" class="empty-state hidden">暂无生成记录</div>
+    </section>
+
+    <!-- Tab 3：工作流 -->
+    <section id="tab-workflows" class="tab-panel hidden">
+      <div id="wf-manage-view">
+        <div class="wf-manage-actions">
+          <button id="wf-create-btn" class="btn btn-primary" type="button">新建工作流</button>
+          <button id="wf-upload-btn" class="btn" type="button">上传 ComfyUI JSON</button>
+          <input type="file" id="wf-upload-input" accept=".json" class="hidden">
+        </div>
+        <div id="wf-manage-table"></div>
+      </div>
+      <div id="wf-editor-view" class="hidden">
+        <div class="editor-head">
+          <button id="editor-back-btn" class="btn btn-ghost" type="button">← 返回列表</button>
+          <span id="editor-title" class="editor-title mono"></span>
+          <div class="editor-actions">
+            <button id="editor-validate-btn" class="btn" type="button">校验</button>
+            <button id="editor-save-btn" class="btn btn-primary" type="button">保存</button>
+          </div>
+        </div>
+        <textarea id="editor-textarea" class="editor-textarea mono" spellcheck="false"></textarea>
+        <div id="editor-report"></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="toast-root"></div>
+<div id="overlay-root"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

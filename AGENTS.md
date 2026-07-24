@@ -6,6 +6,7 @@
 
 ```bash
 uv run python bot.py    # 启动 Bot（唯一入口，不要用 main.py）
+uv run python -m admin.app  # 启动 Admin 面板（FastAPI，:8080）
 uv add <package>        # 添加依赖
 ```
 
@@ -36,6 +37,16 @@ uv add <package>        # 添加依赖
 - `handlers/generation.py` 中 `handle_text()` / `handle_photo()` 通过 5 个辅助函数（`_check_and_charge_credit`、`_create_status_message`、`_download_tg_photo`、`_upload_to_comfy`、`_enqueue_and_notify`）消除重复代码，退款统一在调用方处理。
 - `services/queue.py` 中 `_process_task()` 已拆分为 `_translate_prompt`、`_generate`、`_send_result`、`_cache_gen_context` 私有方法。
 - `services/comfy_api.py` 中 `_build_payload()` 已拆分为 8 个 `_apply_*` 函数。
+
+### Admin 面板（FastAPI + vanilla SPA）
+
+- `admin/app.py` — FastAPI 路由（`/api/*` + 静态 SPA）；`python -m admin.app` 以 uvicorn 起在 8080。
+- `admin/auth.py` — 密码登录（`ADMIN_PASSWORD`）+ HMAC 签名 cookie（`ADMIN_SECRET_KEY`，回退旧名 `FLASK_SECRET_KEY`）+ CSRF 头校验；缺配置拒绝启动。
+- `admin/tasks.py` — 网页端生成任务，**镜像 `services/queue.py` 的 ComfyUI 流程**（翻译/脸部提取门控/上传/心跳/落盘），免额度；改 queue.py 流程时需同步此处。
+- `admin/store.py` — 工作流配置 CRUD（原子写；内容未变不写盘；保留 CRLF/末尾换行）+ 网页端历史（`data/web_generations/`，上限 200 条）。
+- `admin/validators.py` — 配置/节点校验，与 Bot 端 `comfy_api.validate_workflow()` 强制项对齐。
+- `admin/static/` — 无构建 SPA（index.html/app.js/style.css），不依赖 CDN。
+- 依赖在 pyproject 的 `admin` extra（fastapi/uvicorn/python-multipart），Docker 用 `Dockerfile.admin`。
 
 ## 外部服务
 

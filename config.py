@@ -794,4 +794,6 @@ DEFAULT_USER_SETTINGS = {
     "comfy_krea2_lora_enabled": False,
     "comfy_krea2_lora_strength": 5,
     "comfy_prompt_optimize": "nsfw",
+    # 灵感抽卡
+    "gacha_mode": "sfw",
 }

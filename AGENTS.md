@@ -17,7 +17,7 @@ uv add <package>        # 添加依赖
 
 - `bot.py` 是唯一入口（`main.py` 是占位模板，忽略它）。
 - `concurrent_updates(False)` — Bot 串行处理消息，无需担心并发。
-- Handler 注册顺序决定匹配优先级（`bot.py:61-65`）：workflow_menu → settings → generation → credits → comfy_settings。
+- Handler 注册顺序决定匹配优先级（`bot.py:67-72`）：workflow_menu → gacha → settings → generation → credits → comfy_settings。
 - 工作流系统由 `config.py` 中 `WORKFLOW_REGISTRY` 驱动主菜单，每个工作流关联 ComfyUI workflow JSON。
 - 用户设置和额度数据持久化到 `data/user_settings/` 和 `data/credits/` 下的 JSON 文件（非内存）。
 - 多步交互（种子输入、Prompt 输入、首尾帧收集）通过 `context.user_data["_waiting_*"]` 标记实现。
@@ -31,6 +31,8 @@ uv add <package>        # 添加依赖
 |------|------|
 | `handlers/common.py` | 共享工具函数（`safe_answer`、`reply_menu`、`get_user_id`、`refresh_workflows`） |
 | `ui/keyboards.py` | 无副作用键盘构建模块，纯函数返回 `InlineKeyboardMarkup` |
+| `handlers/gacha.py` | 灵感抽卡交互（`/gacha` 命令 + 主菜单「🎰 灵感抽卡」按钮；卡片重抽/单项重抽/SFW-NSFW 切换/直接生成） |
+| `services/gacha.py` | 抽卡词库加载与抽词逻辑（`data/prompt_gacha.json`，按 mtime 缓存热生效；维度含 `skip_chance`/`nsfw_only`，词为 `{"en","zh"}`） |
 
 ### 生成流程
 

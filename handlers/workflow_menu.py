@@ -84,6 +84,9 @@ def _build_main_menu() -> tuple[str, InlineKeyboardMarkup]:
         keyboard.append(row)
 
     keyboard.append([
+        InlineKeyboardButton("🎰 灵感抽卡", callback_data="gacha:menu"),
+    ])
+    keyboard.append([
         InlineKeyboardButton("⚙️ 参数设置", callback_data="comfy_settings"),
         InlineKeyboardButton("📖 帮助", callback_data="help_menu"),
     ])
@@ -278,6 +281,7 @@ async def help_commands(update, context):
     text = (
         "<b>🔑 命令列表</b>\n\n"
         "/mode — 切换后端（SD WebUI / ComfyUI）\n"
+        "/gacha — 灵感抽卡，随机词组打开思路\n"
         "/cancel — 取消当前等待输入\n"
         "/credit — 查看额度\n"
         "/start — 重新打开主菜单\n"

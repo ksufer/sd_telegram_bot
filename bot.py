@@ -14,6 +14,7 @@ from handlers import generation as generation_handler
 from handlers import credits as credits_handler
 from handlers import comfy_settings as comfy_settings_handler
 from handlers import workflow_menu as workflow_menu_handler
+from handlers import gacha as gacha_handler
 
 
 def main():
@@ -64,6 +65,7 @@ def main():
     app.bot_data["queue"] = queue
 
     app.add_handlers(workflow_menu_handler.get_handlers())
+    app.add_handlers(gacha_handler.get_handlers())
     app.add_handlers(settings_handler.get_handlers())
     app.add_handlers(generation_handler.get_handlers())
     app.add_handlers(credits_handler.get_handlers())

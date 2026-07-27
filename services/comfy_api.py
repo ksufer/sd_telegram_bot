@@ -17,6 +17,7 @@ from config import (
     COMFY_POLL_INTERVAL,
     COMFY_TIMEOUT,
     COMFY_PROGRESS_HEARTBEAT_INTERVAL,
+    COMFY_SIZE_PRESETS,
     COMFY_VIDEO_FRAMES_PRESETS,
     COMFY_LORA_VARIANTS,
     COMFY_PROMPT_OPTIMIZE_MODES,
@@ -161,11 +162,8 @@ def _apply_model(workflow: dict, wf_config: dict, settings: dict) -> None:
 
 def _apply_dimensions(workflow: dict, wf_config: dict, settings: dict) -> None:
     """注入图片尺寸、视频宽高和帧数。"""
-    if "width_node" in wf_config:
-        _set_node_input(workflow, wf_config["width_node"], wf_config["width_key"],
-                        settings.get("comfy_width", 768))
-        _set_node_input(workflow, wf_config["height_node"], wf_config["height_key"],
-                        settings.get("comfy_height", 1280))
+    _apply_image_dimensions(workflow, wf_config, settings)
+    _apply_resolution_selector(workflow, wf_config, settings)
     if "video_width_node" in wf_config:
         aspect = settings.get("comfy_video_aspect", "9:16")
         resolution = settings.get("comfy_video_resolution", "480p")
@@ -180,6 +178,36 @@ def _apply_dimensions(workflow: dict, wf_config: dict, settings: dict) -> None:
                                              COMFY_VIDEO_FRAMES_PRESETS["81"])
         _set_node_input(workflow, wf_config["video_frames_node"],
                         wf_config["video_frames_key"], cfg["frames"])
+
+
+def _apply_image_dimensions(workflow: dict, wf_config: dict, settings: dict) -> None:
+    """注入精确宽高到 EmptyLatentImage 节点。"""
+    if "width_node" in wf_config:
+        _set_node_input(workflow, wf_config["width_node"], wf_config["width_key"],
+                        settings.get("comfy_width", 960))
+        _set_node_input(workflow, wf_config["height_node"], wf_config["height_key"],
+                        settings.get("comfy_height", 1280))
+
+
+def _apply_resolution_selector(workflow: dict, wf_config: dict, settings: dict) -> None:
+    """注入 aspect_ratio + megapixels 到 ResolutionSelector 节点，
+    确保 tile 计算节点读取到与主图一致的尺寸参数。
+    当 preset lookup 失败（旧用户尺寸未迁移）时，跳过注入并记录 warning。"""
+    rs_node = wf_config.get("resolution_selector_node")
+    if not rs_node:
+        return
+    w = settings.get("comfy_width", 960)
+    h = settings.get("comfy_height", 1280)
+    for preset in COMFY_SIZE_PRESETS.values():
+        if preset["width"] == w and preset["height"] == h:
+            _set_node_input(workflow, rs_node,
+                            wf_config["resolution_selector_aspect_key"],
+                            preset["rs_ar"])
+            _set_node_input(workflow, rs_node,
+                            wf_config["resolution_selector_mp_key"],
+                            preset["rs_mp"])
+            return
+    logger.warning("ResolutionSelector lookup 失败: %dx%d 不在预设中，跳过 RS 注入", w, h)
 
 
 def _apply_images(workflow: dict, wf_config: dict,

@@ -242,7 +242,7 @@ _DEFAULT_COMFY_WORKFLOWS = {
         "width_key": "width",
         "height_node": "74",
         "height_key": "height",
-        "default_model": "moodyKrea2Mix_v20OrientalEdition.safetensors",
+        "default_model": "moodyKrea2Mix_v40.safetensors",
         # LoRA
         "lora_enable_node": "81",
         "lora_enable_key": "value",
@@ -270,7 +270,10 @@ _DEFAULT_COMFY_WORKFLOWS = {
         "face_detailer_prompt_key": "text",
         "facedetailer_seed_node": "62",
         "facedetailer_seed_key": "seed",
-        "workflow_file": "krea2-up-zitface.json",
+        "workflow_file": "krea2-zitface-new.json",
+        "resolution_selector_node": "51",
+        "resolution_selector_aspect_key": "aspect_ratio",
+        "resolution_selector_mp_key": "megapixels",
     },
     "image-to-real": {
         "label": "Image-to-Real（动漫转写实）",
@@ -457,12 +460,43 @@ SIZE_PRESETS = {
 }
 
 # ---- ComfyUI 预置图片尺寸（key 用于 callback data，无特殊字符）----
+# rs_ar = ResolutionSelector aspect_ratio 字符串
+# rs_mp = ResolutionSelector megapixels 值
 COMFY_SIZE_PRESETS = {
-    "768x1280":  {"label": "768×1280（竖版）", "width": 768,  "height": 1280},
-    "1280x768":  {"label": "1280×768（横版）", "width": 1280, "height": 768},
-    "1024x1024": {"label": "1024×1024（方形）", "width": 1024, "height": 1024},
-    "896x1152":  {"label": "896×1152（3:4）",  "width": 896,  "height": 1152},
-    "1152x896":  {"label": "1152×896（4:3）",  "width": 1152, "height": 896},
+    # ---- 约1MP ----
+    "768x1152":  {"label": "768×1152 2:3 竖版 (约1MP)",   "width": 768,  "height": 1152,
+                  "rs_ar": "2:3 (Portrait)",              "rs_mp": 1},
+    "1152x768":  {"label": "1152×768 3:2 横版 (约1MP)",   "width": 1152, "height": 768,
+                  "rs_ar": "3:2 (Landscape)",             "rs_mp": 1},
+    "960x1280":  {"label": "960×1280 3:4 竖版 (约1MP)",   "width": 960,  "height": 1280,
+                  "rs_ar": "3:4 (Portrait Standard)",     "rs_mp": 1},
+    "1280x960":  {"label": "1280×960 4:3 横版 (约1MP)",   "width": 1280, "height": 960,
+                  "rs_ar": "4:3 (Landscape Standard)",    "rs_mp": 1},
+    "1024x1024": {"label": "1024×1024 1:1 方形 (约1MP)",  "width": 1024, "height": 1024,
+                  "rs_ar": "1:1 (Square)",                "rs_mp": 1},
+    "720x1280":  {"label": "720×1280 9:16 竖版 (约1MP)",  "width": 720,  "height": 1280,
+                  "rs_ar": "9:16 (Portrait Widescreen)",  "rs_mp": 1},
+    "1280x720":  {"label": "1280×720 16:9 横版 (约1MP)",  "width": 1280, "height": 720,
+                  "rs_ar": "16:9 (Landscape Widescreen)", "rs_mp": 1},
+    "1512x648":  {"label": "1512×648 21:9 宽屏 (约1MP)",  "width": 1512, "height": 648,
+                  "rs_ar": "21:9 (Ultrawide)",            "rs_mp": 1},
+    # ---- 约2MP ----
+    "1152x1728": {"label": "1152×1728 2:3 竖版 (约2MP)",  "width": 1152, "height": 1728,
+                  "rs_ar": "2:3 (Portrait)",              "rs_mp": 2},
+    "1728x1152": {"label": "1728×1152 3:2 横版 (约2MP)",  "width": 1728, "height": 1152,
+                  "rs_ar": "3:2 (Landscape)",             "rs_mp": 2},
+    "1152x1536": {"label": "1152×1536 3:4 竖版 (约2MP)",  "width": 1152, "height": 1536,
+                  "rs_ar": "3:4 (Portrait Standard)",     "rs_mp": 2},
+    "1536x1152": {"label": "1536×1152 4:3 横版 (约2MP)",  "width": 1536, "height": 1152,
+                  "rs_ar": "4:3 (Landscape Standard)",    "rs_mp": 2},
+    "1408x1408": {"label": "1408×1408 1:1 方形 (约2MP)",  "width": 1408, "height": 1408,
+                  "rs_ar": "1:1 (Square)",                "rs_mp": 2},
+    "1080x1920": {"label": "1080×1920 9:16 竖版 (约2MP)", "width": 1080, "height": 1920,
+                  "rs_ar": "9:16 (Portrait Widescreen)",  "rs_mp": 2},
+    "1920x1080": {"label": "1920×1080 16:9 横版 (约2MP)", "width": 1920, "height": 1080,
+                  "rs_ar": "16:9 (Landscape Widescreen)", "rs_mp": 2},
+    "2240x960":  {"label": "2240×960 21:9 宽屏 (约2MP)",  "width": 2240, "height": 960,
+                  "rs_ar": "21:9 (Ultrawide)",            "rs_mp": 2},
 }
 
 # ---- ComfyUI 视频比例预设 ----
@@ -779,7 +813,7 @@ DEFAULT_USER_SETTINGS = {
     "comfy_workflow": COMFY_DEFAULT_WORKFLOW,
     "comfy_model": COMFY_DEFAULT_MODEL,
     "comfy_seed": -1,
-    "comfy_width": 768,
+    "comfy_width": 960,
     "comfy_height": 1280,
     "comfy_translate": False,
     "comfy_prompt": "",  # 空 = 使用 workflow 默认 prompt

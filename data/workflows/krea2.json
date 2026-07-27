@@ -25,7 +25,7 @@
     "width_key": "width",
     "height_node": "74",
     "height_key": "height",
-    "default_model": "moodyKrea2Mix_v20OrientalEdition.safetensors",
+    "default_model": "moodyKrea2Mix_v40.safetensors",
     "lora_enable_node": "81",
     "lora_enable_key": "value",
     "lora_strength_node": "78",
@@ -50,7 +50,10 @@
     "face_detailer_prompt_key": "text",
     "facedetailer_seed_node": "62",
     "facedetailer_seed_key": "seed",
-    "workflow_file": "krea2-up-zitface.json"
+    "workflow_file": "krea2-zitface-new.json",
+    "resolution_selector_node": "51",
+    "resolution_selector_aspect_key": "aspect_ratio",
+    "resolution_selector_mp_key": "megapixels"
   },
   "user_configurable": [
     "comfy_seed",

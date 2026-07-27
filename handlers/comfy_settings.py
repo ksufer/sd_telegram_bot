@@ -90,7 +90,7 @@ def _add_dimension_rows(keyboard: list, info_lines: list,
         not wf_config.get("is_img2img", False)
         and _can_config_size(wf_config, uc)
     ):
-        current_w = settings.get("comfy_width", 768)
+        current_w = settings.get("comfy_width", 960)
         current_h = settings.get("comfy_height", 1280)
         info_lines.append(f"尺寸: {current_w}×{current_h}")
         keyboard.append([
@@ -271,7 +271,7 @@ def _comfy_model_menu(settings: dict, models: list[str]) -> tuple[str, InlineKey
 
 
 def _comfy_size_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
-    current_w = settings.get("comfy_width", 768)
+    current_w = settings.get("comfy_width", 960)
     current_h = settings.get("comfy_height", 1280)
     text = f"<b>选择尺寸</b>\n当前: {current_w}×{current_h}"
 

@@ -133,7 +133,7 @@ def _build_workflow_detail(workflow_entry: dict, settings: dict) -> tuple[str, I
         model = settings.get("comfy_model", wf_config.get("default_model", "?"))
         parts.append(f"模型={html.escape(str(model))}")
     if not wf_config.get("is_img2img", False):
-        w = settings.get("comfy_width", 768)
+        w = settings.get("comfy_width", 960)
         h = settings.get("comfy_height", 1280)
         parts.append(f"尺寸={w}×{h}")
     if wf_config.get("output_type") == "video":

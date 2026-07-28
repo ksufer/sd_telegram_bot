@@ -93,6 +93,6 @@ start.bat           # Windows 双击（对应 .bat 版本）
 ## 修改代码时
 
 - `.env` 只放敏感信息（token、key、地址），常量放在 `config.py`。
-- 新增工作流：在 `config.py` 的 `WORKFLOW_REGISTRY` 和 `COMFY_WORKFLOWS` 中注册，workflow JSON 放 `data/` 目录。
+- 新增工作流：在 `data/workflows/` 新建 schema_version=1 的注册配置（key 与文件名一致），并同步维护 `config.py` 中的回退默认值（`scripts/export_workflows.py` 的导出源）；ComfyUI workflow JSON 放入 `data/comfy_workflows/`。`data/workflows/` 与 `data/comfy_workflows/` 的改动热重载生效；`config.py` 默认值改动需重启进程。
 - 新增 handler 文件后，在 `bot.py` 中 import 并 `add_handlers()`，注意注册顺序。
 - 配置变更不需要重启即可生效（`load_dotenv()` 在 `config.py` import 时执行，但环境变量需重启容器才能更新）。

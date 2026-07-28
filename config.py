@@ -166,6 +166,20 @@ _DEFAULT_WORKFLOW_REGISTRY = [
         "comfy_workflow": "qwen-2pic-edit",
         "input_type": "photo",
     },
+    {
+        "key": "moody-krea2",
+        "emoji": "🌙",
+        "label": "Moody Krea2",
+        "description": "MoodyKrea2 模型文生图 + 提示词优化 + 2x 放大",
+        "how_to": (
+            "直接发送描述词即可\n"
+            "例如：古力娜扎，长发，连衣裙，室外\n\n"
+            "可在 ComfyUI 设置中配置提示词优化开关"
+        ),
+        "backend": "comfyui",
+        "comfy_workflow": "moody-krea2",
+        "input_type": "text",
+    },
 ]
 
 _DEFAULT_COMFY_WORKFLOWS = {
@@ -396,6 +410,37 @@ _DEFAULT_COMFY_WORKFLOWS = {
             "image2": {"node": "122", "key": "image"},
         },
         "default_model": "Qwen-Rapid-AIO-NSFW-v11.1.safetensors",
+    },
+    "moody-krea2": {
+        "label": "MoodyKrea2 Minimal（文生图+提示词优化+放大）",
+        "is_img2img": False,
+        "model_selectable": True,
+        "prompt_node": "869",
+        "prompt_key": "value",
+        "seed_node": ["851", "855"],
+        "seed_key": "seed",
+        "model_node": "761",
+        "model_key": "unet_name",
+        "model_loader_class": "UNETLoader",
+        "width_node": "698",
+        "width_key": "width",
+        "height_node": "698",
+        "height_key": "height",
+        "default_model": "moodyKrea2Mix_v50.safetensors",
+        # 提示词优化（Refine Prompt? → TextGenerate）
+        "prompt_optimize_node": "870",
+        "prompt_optimize_key": "value",
+        "prompt_optimize_seed_node": "872",
+        "prompt_optimize_seed_key": "sampling_mode.seed",
+        "prompt_system_node": "871",
+        "prompt_system_key": "value",
+        "prompt_output_node": "874",
+        # SD Upscale（始终执行，无开关）
+        "sd_upscale_node": "863",
+        "sd_upscale_seed_key": "seed",
+        "sd_upscale_prompt_node": "864",
+        "sd_upscale_prompt_key": "text",
+        "workflow_file": "moodyKrea2Minimal_v30_tel.json",
     },
 }
 

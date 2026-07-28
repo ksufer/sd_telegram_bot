@@ -32,12 +32,20 @@ def generation_menu(context_id: str) -> InlineKeyboardMarkup:
 
 
 def build_toggle_row(settings: dict, wf_config: dict) -> list:
-    """构建三级开关行（🔍 🅿️ 👤）。"""
+    """构建快捷开关行（🔍 🎨/🅿️ 👤），按 workflow 配置出现。"""
     row = []
     if wf_config.get("upscale_switch_node"):
         on = settings.get("comfy_upscale_enabled", True)
         row.append(InlineKeyboardButton(
             "🔍" if on else "🔍✖", callback_data="comfy_upscale_toggle_gen"))
+    if wf_config.get("prompt_optimize_node"):
+        mode = settings.get("comfy_prompt_optimize", "nsfw")
+        if isinstance(mode, bool):
+            mode = "nsfw" if mode else "off"
+        mode_cfg = COMFY_PROMPT_OPTIMIZE_MODES.get(
+            mode, COMFY_PROMPT_OPTIMIZE_MODES["nsfw"])
+        row.append(InlineKeyboardButton(
+            mode_cfg["icon"], callback_data="comfy_prompt_optimize_cycle_gen"))
     if wf_config.get("pussydetailer_switch_node"):
         on = settings.get("comfy_pussydetailer_enabled", True)
         row.append(InlineKeyboardButton(

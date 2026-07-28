@@ -8,6 +8,7 @@ import uuid
 from dataclasses import dataclass
 
 import telegram.error
+from PIL import Image
 
 from config import HIRES_FIX_PARAMS, LOG_FULL_PROMPT, DEFAULT_PROMPT_PREFIX
 from config import COMFY_VIDEO_ASPECTS, COMFY_VIDEO_RESOLUTIONS, COMFY_VIDEO_FRAMES_PRESETS
@@ -347,10 +348,32 @@ class GenerationQueue:
                     ),
                 )
         else:
+            photo_data, fit = _fit_photo(raw_data)
+            if fit == "document":
+                # JPEG 重编码后仍超限或解码失败：改发文件（bot 上限 50MB）
+                suffix = "\n（原图过大，已改为文件发送）"
+                doc_info = (_truncate_escaped(info, CAPTION_LIMIT - len(suffix))
+                            + suffix)
+                await retry_on_network_error(
+                    lambda: self._app.bot.send_document(
+                        chat_id=task.chat_id,
+                        document=io.BytesIO(photo_data),
+                        filename="image.png",
+                        caption=doc_info,
+                        parse_mode="HTML",
+                        reply_to_message_id=reply_to,
+                        reply_markup=reply_markup,
+                    ),
+                )
+                return
+            if fit == "jpeg":
+                suffix = "\n（原图过大，已压缩发送）"
+                info = (_truncate_escaped(info, CAPTION_LIMIT - len(suffix))
+                        + suffix)
             await retry_on_network_error(
                 lambda: self._app.bot.send_photo(
                     chat_id=task.chat_id,
-                    photo=io.BytesIO(raw_data),
+                    photo=io.BytesIO(photo_data),
                     caption=info,
                     parse_mode="HTML",
                     reply_to_message_id=reply_to,
@@ -508,6 +531,36 @@ def _build_payload(settings: dict, prompt: str) -> dict:
 
 CAPTION_LIMIT = 1024
 CAPTION_MARGIN = 32
+
+# Telegram sendPhoto 上限 10MB，留 0.5MB 余量
+TELEGRAM_PHOTO_MAX_BYTES = int(9.5 * 1024 * 1024)
+
+
+def _fit_photo(data: bytes) -> tuple[bytes, str | None]:
+    """适配 Telegram sendPhoto 的 10MB 限制。
+
+    返回 (字节, 处理方式)：
+    - None：未超限，原样发送
+    - "jpeg"：已重编码为 JPEG（缩小 payload，同时避免 413 和上传超时）
+    - "document"：重编码后仍超限或无法解码，调用方应改用 send_document 发原字节
+    """
+    if len(data) <= TELEGRAM_PHOTO_MAX_BYTES:
+        return data, None
+    try:
+        img = Image.open(io.BytesIO(data))
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90, optimize=True)
+        jpeg = buf.getvalue()
+    except Exception:
+        logger.warning("图片重编码失败，改用文件发送", exc_info=True)
+        return data, "document"
+    if len(jpeg) <= TELEGRAM_PHOTO_MAX_BYTES:
+        logger.info("图片 %d 字节超 sendPhoto 限制，已重编码为 JPEG（%d 字节）",
+                    len(data), len(jpeg))
+        return jpeg, "jpeg"
+    return data, "document"
 
 
 def _is_reply_not_found(exc: Exception) -> bool:

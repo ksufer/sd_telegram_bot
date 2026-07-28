@@ -435,7 +435,12 @@ _DEFAULT_COMFY_WORKFLOWS = {
         "prompt_system_node": "871",
         "prompt_system_key": "value",
         "prompt_output_node": "874",
-        # SD Upscale（始终执行，无开关）
+        # Upscale 开关：关闭时 SaveImage 直连 ColorMatch（跳过 UltimateSDUpscale）
+        "upscale_switch_node": "732",
+        "upscale_switch_key": "images",
+        "upscale_switch_on": ["863", 0],
+        "upscale_switch_off": ["857", 0],
+        # SD Upscale（默认开启）
         "sd_upscale_node": "863",
         "sd_upscale_seed_key": "seed",
         "sd_upscale_prompt_node": "864",

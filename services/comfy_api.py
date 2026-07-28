@@ -1,8 +1,10 @@
 import asyncio
 import copy
+import fnmatch
 import json
 import logging
 import random
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -459,29 +461,130 @@ def validate_workflow() -> None:
     logger.info("所有 ComfyUI workflow 校验通过")
 
 
+# ── 模型列表缓存与解析 ─────────────────────────────────────
+
+_MODELS_CACHE_TTL = 60   # 成功缓存秒数
+_MODELS_FAIL_TTL = 15    # 失败缓存秒数（避免服务器宕机时每次请求都卡超时）
+# key: (loader_class, model_key) -> (过期时间戳, 模型列表；None 表示拉取失败)
+_models_cache: dict[tuple[str, str], tuple[float, list[str] | None]] = {}
+
+
+async def _fetch_models(loader_class: str, model_key: str) -> list[str] | None:
+    """从 /object_info 拉取模型列表（带 TTL 缓存）。失败返回 None，不抛异常。"""
+    cache_key = (loader_class, model_key)
+    now = time.monotonic()
+    cached = _models_cache.get(cache_key)
+    if cached and now < cached[0]:
+        return cached[1]
+    try:
+        async with httpx.AsyncClient(base_url=COMFY_API_BASE, timeout=10) as client:
+            resp = await client.get(f"/object_info/{loader_class}")
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        logger.warning("拉取模型列表失败（%s）: %s", loader_class, e)
+        _models_cache[cache_key] = (now + _MODELS_FAIL_TTL, None)
+        return None
+    required = data.get(loader_class, {}).get("input", {}).get("required", {})
+    if model_key not in required:
+        logger.warning(
+            "model_key '%s' 不在 %s 的 required 字段中，模型列表为空",
+            model_key, loader_class,
+        )
+        models: list[str] = []
+    else:
+        raw = required[model_key][0]
+        models = raw if isinstance(raw, list) else []
+    _models_cache[cache_key] = (now + _MODELS_CACHE_TTL, models)
+    return models
+
+
 async def get_models(settings: dict) -> list[str]:
-    """从 /object_info 获取当前 workflow 的可用模型列表。"""
+    """从 /object_info 获取当前 workflow 的可用模型列表（带 TTL 缓存）。
+
+    网络失败时抛 ComfyApiError（菜单调用方据此提示服务离线）。
+    """
     wf_key, wf = _get_wf_config(settings)
     loader_class = wf.get("model_loader_class")
     if not loader_class:
         logger.warning("Workflow '%s' 缺少 model_loader_class，模型列表为空", wf_key)
         return []
-    model_key = wf["model_key"]
-    url = f"/object_info/{loader_class}"
-    async with httpx.AsyncClient(base_url=COMFY_API_BASE, timeout=10) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        data = resp.json()
-    node_info = data.get(loader_class, {})
-    required = node_info.get("input", {}).get("required", {})
-    if model_key not in required:
-        logger.warning(
-            "Workflow '%s': model_key '%s' 不在 %s 的 required 字段中，模型列表为空",
-            wf_key, model_key, loader_class
-        )
-        return []
-    models = required[model_key][0]
-    return models if isinstance(models, list) else []
+    models = await _fetch_models(loader_class, wf["model_key"])
+    if models is None:
+        raise ComfyApiError("无法从 ComfyUI 获取模型列表（详见上方 warning）")
+    return models
+
+
+_VERSION_SUFFIX_RE = re.compile(r"(?:[_-]?[Vv]?\d[\d.]*)+$")
+_MODEL_EXTS = (".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".gguf")
+
+
+def _derive_model_prefix(model_name: str) -> str:
+    """从模型文件名推导家族前缀：去扩展名，再剥离尾部版本号。
+
+    例：moodyKrea2Mix_v50.safetensors → moodyKrea2Mix
+        moodyPornMix_zitV9.safetensors → moodyPornMix_zit
+    无法剥离时返回去扩展名后的全名（即只做精确匹配）。
+    """
+    stem = model_name
+    for ext in _MODEL_EXTS:
+        if stem.endswith(ext):
+            stem = stem[: -len(ext)]
+            break
+    return _VERSION_SUFFIX_RE.sub("", stem) or stem
+
+
+def _natural_sort_key(name: str) -> list:
+    """数字分段比较的自然排序 key，避免 'V13' < 'V9' 的字符串序问题。
+
+    分段带类型标记（数字段 0 / 文本段 1），防止异构名字比较时 int/str 碰撞。
+    """
+    return [(0, int(p)) if p.isdigit() else (1, p)
+            for p in re.split(r"(\d+)", name)]
+
+
+async def resolve_model(wf_key: str, wf_config: dict, settings: dict) -> str | None:
+    """对照 ComfyUI 实时模型列表解析实际应注入的模型。
+
+    解析链：用户 comfy_model → default_model → 家族最新
+    （default_model_pattern glob，或从 default_model 推导前缀）→ 列表第一个。
+    列表拉取失败返回 None（调用方保持未解析的原行为，无回归）。
+    """
+    loader_class = wf_config.get("model_loader_class")
+    model_key = wf_config.get("model_key")
+    if not loader_class or not model_key:
+        return None
+    models = await _fetch_models(loader_class, model_key)
+    if not models:
+        return None
+
+    user_model = settings.get("comfy_model")
+    default_model = wf_config.get("default_model", "")
+    if user_model in models:
+        return user_model
+    if default_model in models:
+        if user_model:
+            logger.info("Workflow '%s': 用户模型 '%s' 已失效，回退默认 '%s'",
+                        wf_key, user_model, default_model)
+        return default_model
+
+    # 家族匹配：显式 glob 优先，否则从 default_model 推导前缀
+    pattern = wf_config.get("default_model_pattern")
+    if pattern:
+        family = [m for m in models if fnmatch.fnmatchcase(m, pattern)]
+    else:
+        prefix = _derive_model_prefix(default_model)
+        family = [m for m in models if m.startswith(prefix)] if prefix else []
+    if family:
+        picked = max(family, key=_natural_sort_key)
+        logger.info("Workflow '%s': 默认模型 '%s' 已失效，跟随家族最新 '%s'",
+                    wf_key, default_model or user_model, picked)
+        return picked
+
+    logger.warning(
+        "Workflow '%s': 模型 '%s' 及家族均无匹配，兜底列表第一个 '%s'",
+        wf_key, user_model or default_model, models[0])
+    return models[0]
 
 
 async def upload_image(image_bytes: bytes, filename: str | None = None) -> str:
@@ -668,6 +771,11 @@ async def generate(prompt: str, settings: dict, seed: int,
     # 解析为实际生效的 wf_key（用户旧 key 已被删除时回退），缓存键随之正确
     wf_key, wf_config = _get_wf_config(settings)
     workflow = _load_workflow(wf_key)
+    # 对照服务器实时模型列表解析模型：默认值/用户保存的模型被删后自动跟随家族最新
+    if wf_config.get("model_selectable", True) and wf_config.get("model_node"):
+        resolved = await resolve_model(wf_key, wf_config, settings)
+        if resolved:
+            settings = {**settings, "comfy_model": resolved}
     payload = _build_payload(workflow, prompt, seed, settings,
                              uploaded_image=uploaded_image,
                              uploaded_images=uploaded_images,

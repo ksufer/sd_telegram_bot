@@ -95,4 +95,5 @@ start.bat           # Windows 双击（对应 .bat 版本）
 - `.env` 只放敏感信息（token、key、地址），常量放在 `config.py`。
 - 新增工作流：在 `data/workflows/` 新建 schema_version=1 的注册配置（key 与文件名一致），并同步维护 `config.py` 中的回退默认值（`scripts/export_workflows.py` 的导出源）；ComfyUI workflow JSON 放入 `data/comfy_workflows/`。`data/workflows/` 与 `data/comfy_workflows/` 的改动热重载生效；`config.py` 默认值改动需重启进程。
 - 新增 handler 文件后，在 `bot.py` 中 import 并 `add_handlers()`，注意注册顺序。
+- 模型更新无需改配置：生成时 `comfy_api.resolve_model()` 对照 ComfyUI 实时模型列表解析，链为「用户 comfy_model → `default_model` → 家族最新（自然排序；可选 `default_model_pattern` glob 覆盖，默认从 `default_model` 剥离尾部版本号推导前缀）→ 列表第一个」。模型列表有 60s TTL 缓存（失败 15s）。
 - 配置变更不需要重启即可生效（`load_dotenv()` 在 `config.py` import 时执行，但环境变量需重启容器才能更新）。

@@ -180,6 +180,21 @@ _DEFAULT_WORKFLOW_REGISTRY = [
         "comfy_workflow": "moody-krea2",
         "input_type": "text",
     },
+    {
+        "key": "f2k-edit",
+        "emoji": "🪄",
+        "label": "Flux2 图片编辑",
+        "description": "上传图片，Flux2 Klein 9B 快速编辑（4 步出图）",
+        "how_to": (
+            "发送一张图片即可（无文字时使用内置默认指令）\n"
+            "也可附带文字描述编辑要求\n"
+            "例如：换成红色连衣裙、去掉背景人物\n\n"
+            "输出图片保持原图比例（统一到 1.5MP）"
+        ),
+        "backend": "comfyui",
+        "comfy_workflow": "f2k-edit",
+        "input_type": "photo",
+    },
 ]
 
 _DEFAULT_COMFY_WORKFLOWS = {
@@ -446,6 +461,23 @@ _DEFAULT_COMFY_WORKFLOWS = {
         "sd_upscale_prompt_node": "864",
         "sd_upscale_prompt_key": "text",
         "workflow_file": "moodyKrea2Minimal_v30_tel.json",
+    },
+    "f2k-edit": {
+        "label": "Flux2 Klein 图片编辑（图生图）",
+        "is_img2img": True,
+        "model_selectable": True,
+        "use_caption_as_prompt": True,
+        "prompt_node": "185",
+        "prompt_key": "text",
+        "seed_node": "28",
+        "seed_key": "noise_seed",
+        "model_node": "100",
+        "model_key": "unet_name",
+        "model_loader_class": "UNETLoader",
+        "load_image_node": "15",
+        "load_image_key": "image",
+        "default_model": "pornmasterFlux2Klein_v4TurboFp8.safetensors",
+        "workflow_file": "F2k_9B_turbo_Single-image-editing_Takeoff.json",
     },
 }
 

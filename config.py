@@ -195,6 +195,23 @@ _DEFAULT_WORKFLOW_REGISTRY = [
         "comfy_workflow": "f2k-edit",
         "input_type": "photo",
     },
+    {
+        "key": "f2k-2pic-edit",
+        "emoji": "🧩",
+        "label": "Flux2 双图编辑",
+        "description": "上传2张图片+提示词，Flux2 Klein 9B 合成编辑（换装/换物）",
+        "how_to": (
+            "1. 发送第一张图片（主图，被编辑人物）\n"
+            "2. 发送第二张图片（参考，如衣物/道具），可附带文字描述\n"
+            "3. 若未附带描述，再发送文字说明\n\n"
+            "示例：图1=人物，图2=泳装\n"
+            "描述=把图1人物的衣服换成图2的泳装\n\n"
+            "输出跟随第一张图比例（1.5MP 上限）"
+        ),
+        "backend": "comfyui",
+        "comfy_workflow": "f2k-2pic-edit",
+        "input_type": "photo",
+    },
 ]
 
 _DEFAULT_COMFY_WORKFLOWS = {
@@ -478,6 +495,25 @@ _DEFAULT_COMFY_WORKFLOWS = {
         "load_image_key": "image",
         "default_model": "pornmasterFlux2Klein_v4TurboFp8.safetensors",
         "workflow_file": "F2k_9B_turbo_Single-image-editing_Takeoff.json",
+    },
+    "f2k-2pic-edit": {
+        "label": "Flux2 Klein 双图编辑（图生图）",
+        "is_img2img": True,
+        "model_selectable": True,
+        "use_caption_as_prompt": True,
+        "prompt_node": "8",
+        "prompt_key": "text",
+        "seed_node": "43",
+        "seed_key": "noise_seed",
+        "model_node": "9",
+        "model_key": "unet_name",
+        "model_loader_class": "UNETLoader",
+        "load_image_nodes": {
+            "image1": {"node": "17", "key": "image"},
+            "image2": {"node": "29", "key": "image"},
+        },
+        "default_model": "pornmasterFlux2Klein_v4TurboFp8.safetensors",
+        "workflow_file": "F2K_9B_Turbo_Multiple-images-editing_Automatic.json",
     },
 }
 

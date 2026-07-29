@@ -189,7 +189,7 @@ _DEFAULT_WORKFLOW_REGISTRY = [
             "发送一张图片即可（无文字时使用内置默认指令）\n"
             "也可附带文字描述编辑要求\n"
             "例如：换成红色连衣裙、去掉背景人物\n\n"
-            "输出图片保持原图比例（统一到 1.5MP）"
+            "输出图片保持原图比例（统一到 2MP），自动 2x SD 放大（🔍 可关）"
         ),
         "backend": "comfyui",
         "comfy_workflow": "f2k-edit",
@@ -206,7 +206,7 @@ _DEFAULT_WORKFLOW_REGISTRY = [
             "3. 若未附带描述，再发送文字说明\n\n"
             "示例：图1=人物，图2=泳装\n"
             "描述=把图1人物的衣服换成图2的泳装\n\n"
-            "输出跟随第一张图比例（1.5MP 上限）"
+            "输出跟随第一张图比例（统一到 2MP），自动 2x SD 放大（🔍 可关）"
         ),
         "backend": "comfyui",
         "comfy_workflow": "f2k-2pic-edit",
@@ -494,6 +494,15 @@ _DEFAULT_COMFY_WORKFLOWS = {
         "load_image_node": "15",
         "load_image_key": "image",
         "default_model": "pornmasterFlux2Klein_v4TurboFp8.safetensors",
+        # Upscale 开关：关闭时 SaveImage 直连 cleanGpuUsed（跳过 UltimateSDUpscale）
+        "upscale_switch_node": "201",
+        "upscale_switch_key": "images",
+        "upscale_switch_on": ["305", 0],
+        "upscale_switch_off": ["251", 0],
+        "sd_upscale_node": "305",
+        "sd_upscale_seed_key": "seed",
+        "sd_upscale_prompt_node": "306",
+        "sd_upscale_prompt_key": "text",
         "workflow_file": "F2k_9B_turbo_Single-image-editing_Takeoff.json",
     },
     "f2k-2pic-edit": {
@@ -513,6 +522,15 @@ _DEFAULT_COMFY_WORKFLOWS = {
             "image2": {"node": "29", "key": "image"},
         },
         "default_model": "pornmasterFlux2Klein_v4TurboFp8.safetensors",
+        # Upscale 开关：关闭时 SaveImage 直连 cleanGpuUsed（跳过 UltimateSDUpscale）
+        "upscale_switch_node": "18",
+        "upscale_switch_key": "images",
+        "upscale_switch_on": ["305", 0],
+        "upscale_switch_off": ["23", 0],
+        "sd_upscale_node": "305",
+        "sd_upscale_seed_key": "seed",
+        "sd_upscale_prompt_node": "306",
+        "sd_upscale_prompt_key": "text",
         "workflow_file": "F2K_9B_Turbo_Multiple-images-editing_Automatic.json",
     },
 }

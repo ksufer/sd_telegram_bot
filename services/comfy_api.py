@@ -360,8 +360,12 @@ def _apply_face_prompt(workflow: dict, wf_config: dict, face_prompt: str | None,
 def _apply_upscale_prompts(workflow: dict, wf_config: dict,
                            prompt_fallback: str, raw_prompt: str,
                            settings: dict, face_prompt: str | None) -> None:
-    """注入 SD Upscale 提示词（脸部提示词 + NSFW 身体关键词）。"""
-    if "sd_upscale_prompt_node" in wf_config:
+    """注入 SD Upscale 提示词（脸部提示词 + NSFW 身体关键词）。
+
+    comfy_sd_upscale_prompt_inject=False 时跳过注入，节点保留 workflow 内置文本。
+    """
+    if ("sd_upscale_prompt_node" in wf_config
+            and settings.get("comfy_sd_upscale_prompt_inject", True)):
         base = (face_prompt or settings.get("comfy_face_prompt", "")
                 or prompt_fallback)
         found = [kw for kw in NSFW_BODY_KEYWORDS

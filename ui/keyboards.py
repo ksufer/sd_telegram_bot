@@ -46,6 +46,10 @@ def build_toggle_row(settings: dict, wf_config: dict) -> list:
             mode, COMFY_PROMPT_OPTIMIZE_MODES["nsfw"])
         row.append(InlineKeyboardButton(
             mode_cfg["icon"], callback_data="comfy_prompt_optimize_cycle_gen"))
+    if wf_config.get("sd_upscale_prompt_node"):
+        on = settings.get("comfy_sd_upscale_prompt_inject", True)
+        row.append(InlineKeyboardButton(
+            "📝" if on else "📝✖", callback_data="comfy_sd_upscale_prompt_toggle_gen"))
     if wf_config.get("pussydetailer_switch_node"):
         on = settings.get("comfy_pussydetailer_enabled", True)
         row.append(InlineKeyboardButton(

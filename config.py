@@ -540,6 +540,8 @@ def _infer_user_configurable(comfy: dict) -> list[str]:
         items.extend(["comfy_krea2_lora_enabled", "comfy_krea2_lora_strength"])
     if comfy.get("prompt_optimize_node"):
         items.append("comfy_prompt_optimize")
+    if comfy.get("sd_upscale_prompt_node"):
+        items.append("comfy_sd_upscale_prompt_inject")
     return items
 
 for key, cfg in _DEFAULT_COMFY_WORKFLOWS.items():

@@ -136,6 +136,12 @@ def _add_middle_rows(keyboard: list, info_lines: list,
         mode_cfg = COMFY_PROMPT_OPTIMIZE_MODES[mode]
         toggle_row.append(InlineKeyboardButton(mode_cfg["icon"], callback_data="comfy_prompt_optimize_cycle"))
         toggle_text_parts.append(f"优化={mode_cfg['label']}")
+    # SD Upscale 提示词注入开关
+    if wf_config.get("sd_upscale_prompt_node") and "comfy_sd_upscale_prompt_inject" in uc:
+        inject_on = settings.get("comfy_sd_upscale_prompt_inject", True)
+        toggle_row.append(InlineKeyboardButton(
+            "📝" if inject_on else "📝✖", callback_data="comfy_sd_upscale_prompt_toggle"))
+        toggle_text_parts.append(f"放大词注入={'ON' if inject_on else 'OFF'}")
     if toggle_row:
         info_lines.append(" | ".join(toggle_text_parts))
         keyboard.append(toggle_row)
@@ -881,6 +887,11 @@ def get_handlers() -> list:
                              pattern=r"^comfy_prompt_optimize_cycle$"),
         CallbackQueryHandler(auth_callback(_make_cycle_handler(fast=True)),
                              pattern=r"^comfy_prompt_optimize_cycle_gen$"),
+        # SD Upscale 提示词注入开关
+        CallbackQueryHandler(auth_callback(_make_toggle_handler("comfy_sd_upscale_prompt_inject", True, "放大提示词注入")),
+                             pattern=r"^comfy_sd_upscale_prompt_toggle$"),
+        CallbackQueryHandler(auth_callback(_make_toggle_handler("comfy_sd_upscale_prompt_inject", True, "放大提示词注入", fast=True)),
+                             pattern=r"^comfy_sd_upscale_prompt_toggle_gen$"),
         # 脸部提示词
         CallbackQueryHandler(auth_callback(start_comfy_face_prompt_input),
                              pattern=r"^comfy_face_prompt_set$"),

@@ -63,6 +63,7 @@
     "comfy_pussydetailer_enabled",
     "comfy_facedetailer_enabled",
     "comfy_lora_variant",
-    "comfy_face_prompt"
+    "comfy_face_prompt",
+    "comfy_sd_upscale_prompt_inject"
   ]
 }

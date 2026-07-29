@@ -532,8 +532,9 @@ def _build_payload(settings: dict, prompt: str) -> dict:
 CAPTION_LIMIT = 1024
 CAPTION_MARGIN = 32
 
-# Telegram sendPhoto 上限 10MB，留 0.5MB 余量
-TELEGRAM_PHOTO_MAX_BYTES = int(9.5 * 1024 * 1024)
+# Telegram sendPhoto 上限 10MB；但 5-9MB 的 PNG 经代理上传也频繁超时（write_timeout 内传不完），
+# 阈值定为 3MB：生成图普遍超过，统一走 JPEG 重编码（q90 后 1-2MB，秒传）
+TELEGRAM_PHOTO_MAX_BYTES = int(3 * 1024 * 1024)
 
 
 def _fit_photo(data: bytes) -> tuple[bytes, str | None]:

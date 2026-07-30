@@ -968,4 +968,6 @@ DEFAULT_USER_SETTINGS = {
     "comfy_prompt_optimize": "nsfw",
     # 灵感抽卡
     "gacha_mode": "sfw",
+    # Pipeline 动态编排（工作流 key 有序列表）
+    "pipeline_steps": [],
 }

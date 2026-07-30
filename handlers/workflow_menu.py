@@ -85,6 +85,7 @@ def _build_main_menu() -> tuple[str, InlineKeyboardMarkup]:
 
     keyboard.append([
         InlineKeyboardButton("🎰 灵感抽卡", callback_data="gacha:menu"),
+        InlineKeyboardButton("⛓ Pipeline", callback_data="pipe:menu"),
     ])
     keyboard.append([
         InlineKeyboardButton("⚙️ 参数设置", callback_data="comfy_settings"),

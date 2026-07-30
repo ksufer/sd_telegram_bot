@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import html
 import io
 import logging
@@ -12,6 +13,7 @@ from PIL import Image
 
 from config import HIRES_FIX_PARAMS, LOG_FULL_PROMPT, DEFAULT_PROMPT_PREFIX
 from config import COMFY_VIDEO_ASPECTS, COMFY_VIDEO_RESOLUTIONS, COMFY_VIDEO_FRAMES_PRESETS
+from config import ADMIN_USER_ID, WORKFLOW_REGISTRY, COMFY_WORKFLOWS
 from services import sd_api, comfy_api, credits
 from services.network import is_network_error, retry_on_network_error
 from services.translator import translate
@@ -31,6 +33,9 @@ class GenerationTask:
     original_message_id: int | None = None
     reply_to_message_id: int | None = None
     credit_charged: bool = False
+    # Pipeline 连跑上下文 {"steps": [wf_key...], "idx": int}；None = 普通单步任务
+    # （Bot 专有：admin/tasks.py 不创建 pipeline 任务，无需镜像该逻辑）
+    pipeline: dict | None = None
 
 
 class ThrottledProgressUpdater:
@@ -461,9 +466,25 @@ class GenerationQueue:
                 task.credit_charged = False
             raise
 
+        # Pipeline 任务：结果信息加步骤前缀
+        if task.pipeline:
+            steps = task.pipeline.get("steps") or []
+            idx = task.pipeline.get("idx", 0)
+            cur_key = steps[idx] if 0 <= idx < len(steps) else ""
+            label = next((w["label"] for w in WORKFLOW_REGISTRY if w["key"] == cur_key), cur_key)
+            info = f"<b>⛓ Pipeline {idx + 1}/{len(steps)} · {html.escape(label)}</b>\n{info}"
+
         # 发送结果（失败时已退款并告知用户，保留状态消息作为告知渠道）
         sent = await self._send_result(task, raw_data, info, reply_markup,
                                        wf_config, updater)
+
+        # Pipeline 自动连跑：回注输出图并组下一步任务入队
+        if sent:
+            try:
+                await self._maybe_chain_pipeline(task, raw_data, wf_config)
+            except Exception:
+                # 连跑失败不影响已交付的当前步结果（CancelledError 不拦截，正常上抛）
+                logger.error("Pipeline 连跑异常: user=%s", task.user_id, exc_info=True)
 
         # 清理状态消息
         if sent and task.status_message_id is not None:
@@ -476,6 +497,129 @@ class GenerationQueue:
                 logger.debug("删除状态消息失败", exc_info=True)
 
         logger.info("用户 %s 生成完成 | 耗时 %.1fs", task.user_id, elapsed)
+
+    async def _pipe_notify(self, chat_id: int, text: str):
+        """Pipeline 中止通知（独立消息，不复用即将删除的状态消息）。"""
+        try:
+            await retry_on_network_error(
+                lambda: self._app.bot.send_message(chat_id=chat_id, text=text),
+                max_retries=2,
+            )
+        except Exception:
+            logger.debug("Pipeline 通知发送失败", exc_info=True)
+
+    async def _maybe_chain_pipeline(self, task: GenerationTask, raw_data,
+                                    wf_config: dict) -> None:
+        """Pipeline 自动连跑：当前步发送成功后，输出图回传 ComfyUI 并组下一步任务。
+
+        每步独立任务、独立扣 1 额度；任何失败仅通知用户并中止链路，
+        不影响已交付的步骤结果。admin 端不创建 pipeline 任务，无需镜像。
+        """
+        pipe = task.pipeline
+        if not pipe:
+            return
+        steps = pipe.get("steps") or []
+        idx = pipe.get("idx", 0)
+        next_idx = idx + 1
+        if next_idx >= len(steps):
+            return
+        # 以下守卫正常编排不会命中（菜单层已过滤），但配置可热改，命中时通知中止
+        abort_reason = None
+        if task.settings.get("backend") != "comfyui":
+            abort_reason = "后端已切换"
+        elif wf_config.get("output_type") == "video" or not isinstance(raw_data, bytes):
+            abort_reason = "上一步产出不是图片，无法回注"
+        if abort_reason:
+            await self._pipe_notify(
+                task.chat_id,
+                f"⛓ Pipeline 中止：{abort_reason}，"
+                f"已在第 {idx + 1}/{len(steps)} 步完成后停止。")
+            return
+
+        total = len(steps)
+        next_key = steps[next_idx]
+        label = next((w["label"] for w in WORKFLOW_REGISTRY if w["key"] == next_key), next_key)
+
+        next_cfg = COMFY_WORKFLOWS.get(next_key)
+        if (not next_cfg or not next_cfg.get("is_img2img")
+                or not next_cfg.get("load_image_node")):
+            await self._pipe_notify(
+                task.chat_id,
+                f"⛓ Pipeline 中止：第 {next_idx + 1}/{total} 步「{label}」"
+                "不是单图图生图工作流，无法接收上一步输出。")
+            return
+
+        try:
+            uploaded_name = await comfy_api.upload_image(raw_data)
+        except Exception as e:
+            logger.error("Pipeline 输出回传失败: %s", e, exc_info=True)
+            await self._pipe_notify(
+                task.chat_id,
+                f"⛓ Pipeline 中止：第 {next_idx + 1}/{total} 步图片回传失败（{e}）。")
+            return
+
+        # 扣费（管理员免费，与 handlers/generation._check_and_charge_credit 对齐）
+        credit_charged = False
+        is_admin = ADMIN_USER_ID is not None and task.user_id == ADMIN_USER_ID
+        if not is_admin:
+            if not await credits.use_one(task.user_id):
+                await self._pipe_notify(
+                    task.chat_id,
+                    f"⛓ Pipeline 中止：额度不足，已在第 {idx + 1}/{total} 步完成后停止。")
+                return
+            credit_charged = True
+
+        try:
+            # 每步使用自己工作流的默认模型解析链，而非用户全局 comfy_model
+            next_settings = copy.deepcopy(task.settings)
+            next_settings["comfy_workflow"] = next_key
+            default_model = next_cfg.get("default_model")
+            if default_model:
+                next_settings["comfy_model"] = default_model
+            else:
+                next_settings.pop("comfy_model", None)
+            next_settings["_uploaded_image"] = uploaded_name
+            next_settings.pop("_uploaded_images", None)
+
+            status_id = None
+            try:
+                status_msg = await retry_on_network_error(
+                    lambda: self._app.bot.send_message(
+                        chat_id=task.chat_id,
+                        text=f"⛓ Pipeline 步骤 {next_idx + 1}/{total} · {label}\n准备中..."),
+                    max_retries=2,
+                )
+                status_id = status_msg.message_id
+            except Exception:
+                logger.debug("Pipeline 状态消息创建失败", exc_info=True)
+
+            next_task = GenerationTask(
+                user_id=task.user_id,
+                chat_id=task.chat_id,
+                prompt=task.prompt,
+                settings=next_settings,
+                status_message_id=status_id,
+                credit_charged=credit_charged,
+                pipeline={"steps": steps, "idx": next_idx},
+            )
+            try:
+                await self.enqueue(next_task)
+            except Exception:
+                logger.error("Pipeline 下一步入队失败", exc_info=True)
+                if credit_charged:
+                    await credits.refund_one(task.user_id)
+                await self._pipe_notify(
+                    task.chat_id,
+                    f"⛓ Pipeline 中止：第 {next_idx + 1}/{total} 步提交失败，已退还额度。")
+        except asyncio.CancelledError:
+            # 停机排空竞态：额度已扣但任务未入队，对称退款后上抛
+            if credit_charged:
+                try:
+                    await credits.refund_one(task.user_id)
+                except Exception:
+                    logger.error("Pipeline 停机退款失败: user=%s",
+                                 task.user_id, exc_info=True)
+            raise
 
     async def _update_status(self, task: GenerationTask, text: str):
         if task.status_message_id is None:

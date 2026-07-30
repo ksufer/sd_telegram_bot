@@ -194,9 +194,24 @@ async def handle_text(update, context):
         elif waiting == "comfy_krea2_lora_strength":
             await _handle_krea2_lora_strength_input(update, context)
             return
+        elif waiting == "pipe_prompt":
+            # 延迟 import 避免循环（pipeline 依赖本模块的辅助函数）
+            from handlers.pipeline import handle_pipe_prompt_input
+            await handle_pipe_prompt_input(update, context)
+            return
         elif waiting == "sd_seed" or context.user_data.get("_waiting_seed"):
             await _handle_seed_input(update, context)
             return
+
+    # Pipeline 等待首步起始图片期间：文字不进入普通生成流程（避免误扣费）
+    if (context.user_data is not None
+            and context.user_data.get("_pipe_wait_image")
+            and _firstlast_frames is None):
+        _, for_me = _extract_prompt(message, context.bot.username)
+        if for_me:
+            await message.reply_text(
+                "⛓ Pipeline 等待起始图片：请发送一张图片，或 /cancel 取消。")
+        return
 
     user = update.effective_user
     user_id = user.id if user else (message.sender_chat.id if message.sender_chat else 0)
@@ -496,12 +511,18 @@ async def handle_cancel(update, context):
         context.user_data.get("_firstlast_start_frame")
         or context.user_data.get("_firstlast_end_frame")
     ) if context.user_data else False
+    has_pipe = (
+        context.user_data.get("_pipe_wait_image")
+        or context.user_data.get("_pipe_prompt")
+    ) if context.user_data else False
 
-    if waiting or waiting_seed or has_firstlast:
+    if waiting or waiting_seed or has_firstlast or has_pipe:
         if context.user_data:
             context.user_data["_waiting_input"] = None
             context.user_data["_waiting_seed"] = False
             _clear_firstlast_state(context.user_data)
+            context.user_data.pop("_pipe_wait_image", None)
+            context.user_data.pop("_pipe_prompt", None)
         user_id = update.effective_user.id
         settings = _ensure_settings(context, user_id)
         await update.message.reply_text("已取消。")
@@ -637,6 +658,12 @@ async def handle_photo(update, context):
         )
         if not mentioned:
             return
+
+    # Pipeline 等待首步起始图片（在 auto_edit 判定之后分流，延迟 import 避免循环）
+    if context.user_data is not None and context.user_data.get("_pipe_wait_image"):
+        from handlers.pipeline import handle_pipe_image_input
+        await handle_pipe_image_input(update, context)
+        return
 
     # 确认是 ComfyUI 模式且当前 workflow 是图生图（自动编辑时绕过）
     if not auto_edit:

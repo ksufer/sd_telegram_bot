@@ -13,11 +13,31 @@ uv add <package>        # 添加依赖
 - **没有**测试、lint、typecheck 配置，不要试图运行这些命令。
 - Python 3.12，uv 管理依赖，lockfile 为 `uv.lock`。
 
+## CodeGraph 代码索引
+
+项目使用 [CodeGraph](https://www.npmjs.com/package/@colbymchenry/codegraph) 维护符号级代码索引（SQLite，存于 `.codegraph/`，已 gitignore）。CLI 为全局安装的 `codegraph`（npm 包 `@colbymchenry/codegraph`）。探索代码、查调用关系时优先用它，比全文 grep 更快更准。
+
+```bash
+codegraph status            # 查看索引状态/统计
+codegraph sync              # 增量同步（改了代码后跑这个）
+codegraph index             # 全量重建（引擎升级或索引异常时用）
+codegraph query <符号>       # 搜索符号
+codegraph explore <查询>     # 一次拿到相关符号源码 + 调用路径（探索陌生代码首选）
+codegraph node <符号|文件>   # 单个符号源码 + caller/callee 轨迹，或按行读文件
+codegraph callers <符号>     # 谁调用了它
+codegraph callees <符号>     # 它调用了谁
+codegraph impact <符号>      # 改动影响面分析
+codegraph affected [文件]    # 改动文件影响了哪些测试
+```
+
+- MCP 客户端（Claude Code / opencode 等）接入时 daemon 会通过文件监听自动同步；纯 CLI 使用则改完代码手动 `codegraph sync`。
+- `codegraph status` 若提示 "interrupted run" 或 "built by an earlier version"，跑 `codegraph sync` 或 `codegraph index` 修复。
+
 ## 架构要点
 
 - `bot.py` 是唯一入口（`main.py` 是占位模板，忽略它）。
 - `concurrent_updates(False)` — Bot 串行处理消息，无需担心并发。
-- Handler 注册顺序决定匹配优先级（`bot.py:67-72`）：workflow_menu → gacha → settings → generation → credits → comfy_settings。
+- Handler 注册顺序决定匹配优先级（`bot.py:68-74`）：workflow_menu → gacha → pipeline → settings → generation → credits → comfy_settings。
 - 工作流系统由 `config.py` 中 `WORKFLOW_REGISTRY` 驱动主菜单，每个工作流关联 ComfyUI workflow JSON。
 - 用户设置和额度数据持久化到 `data/user_settings/` 和 `data/credits/` 下的 JSON 文件（非内存）。
 - 多步交互（种子输入、Prompt 输入、首尾帧收集）通过 `context.user_data["_waiting_*"]` 标记实现。
@@ -33,12 +53,23 @@ uv add <package>        # 添加依赖
 | `ui/keyboards.py` | 无副作用键盘构建模块，纯函数返回 `InlineKeyboardMarkup` |
 | `handlers/gacha.py` | 灵感抽卡交互（`/gacha` 命令 + 主菜单「🎰 灵感抽卡」按钮；卡片重抽/单项重抽/SFW-NSFW 切换/直接生成） |
 | `services/gacha.py` | 抽卡词库加载与抽词逻辑（`data/prompt_gacha.json`，按 mtime 缓存热生效；维度含 `skip_chance`/`nsfw_only`，词为 `{"en","zh"}`） |
+| `handlers/pipeline.py` | Pipeline 动态编排（主菜单「⛓ Pipeline」；步骤列表持久化在 `settings["pipeline_steps"]`，编排/增删/排序/运行） |
 
 ### 生成流程
 
 - `handlers/generation.py` 中 `handle_text()` / `handle_photo()` 通过 5 个辅助函数（`_check_and_charge_credit`、`_create_status_message`、`_download_tg_photo`、`_upload_to_comfy`、`_enqueue_and_notify`）消除重复代码，退款统一在调用方处理。
 - `services/queue.py` 中 `_process_task()` 已拆分为 `_translate_prompt`、`_generate`、`_send_result`、`_cache_gen_context` 私有方法。
 - `services/comfy_api.py` 中 `_build_payload()` 已拆分为 8 个 `_apply_*` 函数。
+
+### Pipeline 动态编排
+
+- 用户在菜单里编排有序步骤（≥2 步），运行后每步是**独立任务**：独立扣 1 额度、独立状态消息，其他用户任务可穿插。
+- 连跑由 `queue._maybe_chain_pipeline()` 完成：上一步发送成功后 `comfy_api.upload_image()` 回注输出图 → 组下一步任务（`GenerationTask.pipeline = {"steps", "idx"}`）入队；任何失败仅通知并中止，已交付步骤不受影响。
+- 步骤合法性：仅图片输出的 ComfyUI 工作流；后续步必须单图图生图（`is_img2img` + `load_image_node`）；视频/双图工作流不可作为步骤。
+- 每步使用自己工作流的 `default_model` 解析链（覆盖/弹出 `comfy_model`），不用用户全局模型。
+- Prompt 一次输入全程共用；seed 每步独立（各自的 `_gen_context` / reuse 按钮照常）。
+- 会话标记：`_waiting_input == "pipe_prompt"`（等 Prompt）、`_pipe_prompt` / `_pipe_wait_image`（等首图），由 `handle_text`/`handle_photo` 顶部分发（延迟 import 避免循环），`/cancel` 统一清理。
+- **admin/tasks.py 不镜像** pipeline 连跑（网页端不创建带 `pipeline` 字段的任务，走原单步路径）。
 
 ### Admin 面板（FastAPI + vanilla SPA）
 

@@ -541,13 +541,27 @@ class GenerationQueue:
         label = next((w["label"] for w in WORKFLOW_REGISTRY if w["key"] == next_key), next_key)
 
         next_cfg = COMFY_WORKFLOWS.get(next_key)
+        # 双角色图生图（如换装：image1=主图，image2=参考图）
+        dual_nodes = (next_cfg or {}).get("load_image_nodes")
+        is_dual = bool(dual_nodes) and len(dual_nodes) == 2
         if (not next_cfg or not next_cfg.get("is_img2img")
-                or not next_cfg.get("load_image_node")):
+                or (not next_cfg.get("load_image_node") and not is_dual)):
             await self._pipe_notify(
                 task.chat_id,
                 f"⛓ Pipeline 中止：第 {next_idx + 1}/{total} 步「{label}」"
-                "不是单图图生图工作流，无法接收上一步输出。")
+                "不是可用的图生图工作流，无法接收上一步输出。")
             return
+
+        # 双图步需要运行时收集的参考图（第 2 个角色）
+        ref_name = None
+        if is_dual:
+            ref_name = (pipe.get("ref_images") or {}).get(next_idx)
+            if not ref_name:
+                await self._pipe_notify(
+                    task.chat_id,
+                    f"⛓ Pipeline 中止：第 {next_idx + 1}/{total} 步「{label}」"
+                    "缺少参考图，无法继续。")
+                return
 
         try:
             uploaded_name = await comfy_api.upload_image(raw_data)
@@ -578,8 +592,19 @@ class GenerationQueue:
                 next_settings["comfy_model"] = default_model
             else:
                 next_settings.pop("comfy_model", None)
-            next_settings["_uploaded_image"] = uploaded_name
-            next_settings.pop("_uploaded_images", None)
+            if is_dual:
+                # 双图步：产出图 → 第 1 角色（主图），参考图 → 第 2 角色
+                roles = list(dual_nodes.keys())
+                next_settings["_uploaded_images"] = {
+                    roles[0]: uploaded_name, roles[1]: ref_name,
+                }
+                next_settings.pop("_uploaded_image", None)
+            else:
+                next_settings["_uploaded_image"] = uploaded_name
+                next_settings.pop("_uploaded_images", None)
+
+            # 每步提示词独立（无预设时回退上一步 prompt）
+            next_prompt = (pipe.get("prompts") or {}).get(next_idx, task.prompt)
 
             status_id = None
             try:
@@ -596,11 +621,16 @@ class GenerationQueue:
             next_task = GenerationTask(
                 user_id=task.user_id,
                 chat_id=task.chat_id,
-                prompt=task.prompt,
+                prompt=next_prompt,
                 settings=next_settings,
                 status_message_id=status_id,
                 credit_charged=credit_charged,
-                pipeline={"steps": steps, "idx": next_idx},
+                pipeline={
+                    "steps": steps,
+                    "idx": next_idx,
+                    "prompts": pipe.get("prompts") or {},
+                    "ref_images": pipe.get("ref_images") or {},
+                },
             )
             try:
                 await self.enqueue(next_task)

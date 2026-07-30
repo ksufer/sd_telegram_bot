@@ -64,11 +64,15 @@ codegraph affected [文件]    # 改动文件影响了哪些测试
 ### Pipeline 动态编排
 
 - 用户在菜单里编排有序步骤（≥2 步），运行后每步是**独立任务**：独立扣 1 额度、独立状态消息，其他用户任务可穿插。
-- 连跑由 `queue._maybe_chain_pipeline()` 完成：上一步发送成功后 `comfy_api.upload_image()` 回注输出图 → 组下一步任务（`GenerationTask.pipeline = {"steps", "idx"}`）入队；任何失败仅通知并中止，已交付步骤不受影响。
-- 步骤合法性：仅图片输出的 ComfyUI 工作流；后续步必须单图图生图（`is_img2img` + `load_image_node`）；视频/双图工作流不可作为步骤。
+- 连跑由 `queue._maybe_chain_pipeline()` 完成：上一步发送成功后 `comfy_api.upload_image()` 回注输出图 → 组下一步任务入队；任何失败仅通知并中止，已交付步骤不受影响。
+- 步骤持久化在 `settings["pipeline_steps"]`，元素为 `{"key", "prompt"}`（prompt 为预设提示词，空=运行时询问；旧格式纯字符串读取时自动迁移）。`GenerationTask.pipeline = {"steps", "idx", "prompts", "ref_images"}`（内存对象，int 键）。
+- **每步提示词独立**：编辑步的提示词与文生图步不同；运行时按需收集缺失的 prompt（无预设时回退上一步 prompt）。
+- **双图编辑步**（如 qwen-2pic-edit / f2k-2pic-edit 换装）：产出图注入第 1 个角色（主图），运行时向用户收集的参考图注入第 2 个角色（`ref_images`）；运行时收集计划存于 `user_data["_pipe_collect"]`（items/pos/prompts/images）。
+- **重复执行**：运行时输入的 prompt 自动固化为步骤预设；图片文件名缓存在 `user_data["_pipe_last_images"]`（会话级）。再次运行时输入齐备 → 弹「运行确认」页（`pipe:go` 直接开始 / `pipe:reimg` 清缓存重选图片），缺啥问啥。
+- 步骤合法性：仅图片输出的 ComfyUI 工作流；首步为文生图或单图图生图；后续步为单图或双角色图生图；视频工作流不可作为步骤。
 - 每步使用自己工作流的 `default_model` 解析链（覆盖/弹出 `comfy_model`），不用用户全局模型。
-- Prompt 一次输入全程共用；seed 每步独立（各自的 `_gen_context` / reuse 按钮照常）。
-- 会话标记：`_waiting_input == "pipe_prompt"`（等 Prompt）、`_pipe_prompt` / `_pipe_wait_image`（等首图），由 `handle_text`/`handle_photo` 顶部分发（延迟 import 避免循环），`/cancel` 统一清理。
+- seed 每步独立（各自的 `_gen_context` / reuse 按钮照常）。
+- 会话标记：`_waiting_input` 取值 `"pipe_collect"`（收集提示词）/ `"pipe_step_prompt"`（编辑预设）；`_pipe_collect` / `_pipe_edit_step`；由 `handle_text`/`handle_photo` 顶部分发（延迟 import 避免循环），`/cancel` 统一清理。
 - **admin/tasks.py 不镜像** pipeline 连跑（网页端不创建带 `pipeline` 字段的任务，走原单步路径）。
 
 ### Admin 面板（FastAPI + vanilla SPA）

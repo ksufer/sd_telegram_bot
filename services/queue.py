@@ -13,6 +13,7 @@ from PIL import Image
 
 from config import HIRES_FIX_PARAMS, LOG_FULL_PROMPT, DEFAULT_PROMPT_PREFIX
 from config import COMFY_VIDEO_ASPECTS, COMFY_VIDEO_RESOLUTIONS, COMFY_VIDEO_FRAMES_PRESETS
+from config import DEFAULT_VIDEO_FRAMES_KEY
 from config import ADMIN_USER_ID, WORKFLOW_REGISTRY, COMFY_WORKFLOWS
 from services import sd_api, comfy_api, credits
 from services.network import is_network_error, retry_on_network_error
@@ -791,8 +792,10 @@ def _build_comfy_info(task, settings: dict, translated: str, seed: int,
         aspect_cfg = COMFY_VIDEO_ASPECTS.get(aspect, COMFY_VIDEO_ASPECTS["9:16"])
         resolution = settings.get("comfy_video_resolution", "480p")
         resolution_cfg = COMFY_VIDEO_RESOLUTIONS.get(resolution, COMFY_VIDEO_RESOLUTIONS["480p"])
-        frames_key = str(settings.get("comfy_video_frames", 81))
-        frames_cfg = COMFY_VIDEO_FRAMES_PRESETS.get(frames_key, COMFY_VIDEO_FRAMES_PRESETS["81"])
+        frames_key = str(settings.get("comfy_video_frames",
+                                      COMFY_VIDEO_FRAMES_PRESETS[DEFAULT_VIDEO_FRAMES_KEY]["frames"]))
+        frames_cfg = COMFY_VIDEO_FRAMES_PRESETS.get(frames_key,
+                                                    COMFY_VIDEO_FRAMES_PRESETS[DEFAULT_VIDEO_FRAMES_KEY])
         info_parts = [
             f"<b>视频比例:</b> {aspect_cfg['label']}",
             f"<b>视频画质:</b> {resolution_cfg['label']}",

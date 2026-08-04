@@ -29,12 +29,12 @@ const VIDEO_ASPECTS = {
   "9:16": "9:16 竖版", "16:9": "16:9 横版", "4:3": "4:3 横版",
   "3:4": "3:4 竖版", "1:1": "1:1 方形",
 };
-const VIDEO_RESOLUTIONS = { "480p": "480p", "720p": "720p" };
+const VIDEO_RESOLUTIONS = { "480p": "480p", "768p": "768p（原生）" };
 const VIDEO_FRAMES = {
-  "81":  { label: "~3秒 (81帧)",   frames: 81 },
-  "135": { label: "~5秒 (135帧)",  frames: 135 },
-  "189": { label: "~7秒 (189帧)",  frames: 189 },
-  "270": { label: "~10秒 (270帧)", frames: 270 },
+  "124": { label: "~5秒",   frames: 124 },
+  "192": { label: "~8秒",   frames: 192 },
+  "277": { label: "~11秒",  frames: 277 },
+  "362": { label: "~15秒",  frames: 362 },
 };
 const LORA_VARIANTS = { off: "关闭", normal: "正常", spread: "Spread" };
 const PROMPT_OPTIMIZE = { off: "关闭", nsfw: "NSFW", sfw: "SFW" };

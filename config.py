@@ -26,7 +26,7 @@ DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 # ---- ComfyUI API ----
 COMFY_API_BASE = os.getenv("COMFY_API_BASE", "http://10.126.126.4:8188")
 COMFY_POLL_INTERVAL = 2
-COMFY_TIMEOUT = 1500
+COMFY_TIMEOUT = 3600
 # 长任务轮询期间向用户汇报已用时间的间隔（秒）
 COMFY_PROGRESS_HEARTBEAT_INTERVAL = 10
 COMFY_DEFAULT_WORKFLOW = "z-image-turbo"
@@ -114,6 +114,7 @@ _DEFAULT_WORKFLOW_REGISTRY = [
         "how_to": (
             "直接发送描述词即可\n"
             "例如：a cat walking on the beach, cinematic lighting\n\n"
+            "提示词可同时描述镜头、动作与音频（对白/音效/音乐）\n"
             "可在 ComfyUI 设置中调整视频方向、画质和长度"
         ),
         "backend": "comfyui",
@@ -128,6 +129,7 @@ _DEFAULT_WORKFLOW_REGISTRY = [
         "how_to": (
             "发送一张图片（可附带描述词）\n"
             "例如：发一张风景照 → 生成动态视频\n\n"
+            "提示词可同时描述镜头、动作与音频（对白/音效/音乐）\n"
             "可在 ComfyUI 设置中调整视频方向和长度"
         ),
         "backend": "comfyui",
@@ -144,7 +146,8 @@ _DEFAULT_WORKFLOW_REGISTRY = [
             "2. 再发送尾帧图片，可附带文字描述（群聊需 @bot）\n"
             "3. 如未附带描述，再发送文字说明\n\n"
             "例如：首帧=坐着的猫，尾帧=站立的猫\n"
-            "描述=cat slowly standing up"
+            "描述=cat slowly standing up\n\n"
+            "提示词可同时描述镜头、动作与音频（对白/音效/音乐）"
         ),
         "backend": "comfyui",
         "comfy_workflow": "minimax-h3-flf2v",
@@ -681,23 +684,43 @@ COMFY_VIDEO_ASPECTS = {
 # ---- ComfyUI 视频画质预设 ----
 COMFY_VIDEO_RESOLUTIONS = {
     "480p": {"label": "480p", "short_side": 480},
-    "720p": {"label": "720p", "short_side": 720},
+    "768p": {"label": "768p（原生）", "short_side": 768},
 }
+
+# MiniMax H3 官方分辨率上限（native canvas 768px 短边，cap 768x1344）
+COMFY_VIDEO_MAX_EDGE = 1344
+
+
+def _round_to_32(v: float) -> int:
+    """四舍五入到 32 的倍数（MiniMax H3 要求宽高为 32 倍数）。"""
+    return (round(v) + 16) // 32 * 32
 
 
 def compute_video_dimensions(aspect_key: str, resolution_key: str) -> tuple[int, int]:
-    """根据比例和画质计算视频宽高，取整到 16 的倍数。"""
+    """根据比例和画质计算视频宽高，取整到 32 的倍数（与注入一致）。
+
+    长边超过 1344（MiniMax H3 官方上限）时固定长边并按比例重算短边，
+    例如 768p@9:16 → 768x1344、768p@16:9 → 1344x768。
+    """
     ratio = COMFY_VIDEO_ASPECTS.get(aspect_key, COMFY_VIDEO_ASPECTS["9:16"])["ratio"]
     short = COMFY_VIDEO_RESOLUTIONS.get(resolution_key, COMFY_VIDEO_RESOLUTIONS["480p"])["short_side"]
 
     if ratio >= 1:
         # 横版或方形：短边 = 高度
         height = short
-        width = round(height * ratio / 16) * 16
+        width = _round_to_32(height * ratio)
     else:
         # 竖版：短边 = 宽度
         width = short
-        height = round(width / ratio / 16) * 16
+        height = _round_to_32(width / ratio)
+
+    if max(width, height) > COMFY_VIDEO_MAX_EDGE:
+        if width >= height:
+            width = COMFY_VIDEO_MAX_EDGE
+            height = _round_to_32(width / ratio)
+        else:
+            height = COMFY_VIDEO_MAX_EDGE
+            width = _round_to_32(height * ratio)
 
     return width, height
 
@@ -806,12 +829,13 @@ NSFW_BODY_KEYWORDS = [
     "阴部", "私处", "乳头", "乳晕", "乳房", "裸体", "裸",
 ]
 
-# ---- ComfyUI 视频长度预设（帧数）----
+# ---- ComfyUI 视频长度预设（帧数，MiniMax H3 17k+5 网格 + 官方 5s 默认/15s 上限）----
+DEFAULT_VIDEO_FRAMES_KEY = "124"
 COMFY_VIDEO_FRAMES_PRESETS = {
-    "81":  {"label": "~3秒 (81帧)",   "frames": 81},
-    "135": {"label": "~5秒 (135帧)",  "frames": 135},
-    "189": {"label": "~7秒 (189帧)",  "frames": 189},
-    "270": {"label": "~10秒 (270帧)", "frames": 270},
+    "124": {"label": "~5秒",   "frames": 124},
+    "192": {"label": "~8秒",   "frames": 192},
+    "277": {"label": "~11秒",  "frames": 277},
+    "362": {"label": "~15秒",  "frames": 362},
 }
 
 # ---- 高清修复预置参数 ----
@@ -989,7 +1013,7 @@ DEFAULT_USER_SETTINGS = {
     "comfy_prompt": "",  # 空 = 使用 workflow 默认 prompt
     "comfy_video_aspect": "9:16",
     "comfy_video_resolution": "480p",
-    "comfy_video_frames": 81,
+    "comfy_video_frames": 124,
     "comfy_lora_variant": "normal",
     "comfy_upscale_enabled": True,
     "comfy_pussydetailer_enabled": True,

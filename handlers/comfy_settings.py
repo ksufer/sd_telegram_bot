@@ -8,6 +8,7 @@ from telegram.ext import CallbackQueryHandler
 
 from config import COMFY_SIZE_PRESETS, COMFY_WORKFLOWS, COMFY_DEFAULT_WORKFLOW
 from config import COMFY_VIDEO_ASPECTS, COMFY_VIDEO_RESOLUTIONS, COMFY_VIDEO_FRAMES_PRESETS
+from config import DEFAULT_VIDEO_FRAMES_KEY
 from config import COMFY_LORA_VARIANTS, compute_video_dimensions
 from config import COMFY_PROMPT_OPTIMIZE_MODES, COMFY_PROMPT_OPTIMIZE_CYCLE
 from handlers import auth_callback
@@ -73,9 +74,10 @@ def _add_dimension_rows(keyboard: list, info_lines: list,
         resolution_cfg = COMFY_VIDEO_RESOLUTIONS.get(resolution,
                                                      COMFY_VIDEO_RESOLUTIONS["480p"])
         w, h = compute_video_dimensions(aspect, resolution)
-        frames_key = str(settings.get("comfy_video_frames", 81))
+        frames_key = str(settings.get("comfy_video_frames",
+                                      COMFY_VIDEO_FRAMES_PRESETS[DEFAULT_VIDEO_FRAMES_KEY]["frames"]))
         frames_cfg = COMFY_VIDEO_FRAMES_PRESETS.get(frames_key,
-                                                    COMFY_VIDEO_FRAMES_PRESETS["81"])
+                                                    COMFY_VIDEO_FRAMES_PRESETS[DEFAULT_VIDEO_FRAMES_KEY])
         info_lines.append(f"视频比例: {aspect_cfg['label']}")
         info_lines.append(f"视频画质: {resolution_cfg['label']} ({w}×{h})")
         info_lines.append(f"视频长度: {frames_cfg['label']}")
@@ -584,8 +586,13 @@ def _comfy_video_resolution_menu(settings: dict) -> tuple[str, InlineKeyboardMar
 
 
 def _comfy_video_length_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
-    current = settings.get("comfy_video_frames", 81)
-    text = f"<b>选择视频长度</b>\n当前: {current}帧"
+    default_cfg = COMFY_VIDEO_FRAMES_PRESETS[DEFAULT_VIDEO_FRAMES_KEY]
+    current = settings.get("comfy_video_frames", default_cfg["frames"])
+    if current not in {p["frames"] for p in COMFY_VIDEO_FRAMES_PRESETS.values()}:
+        current = default_cfg["frames"]
+    current_label = next(p["label"] for p in COMFY_VIDEO_FRAMES_PRESETS.values()
+                         if p["frames"] == current)
+    text = f"<b>选择视频长度</b>\n当前: {current_label}"
     keyboard = []
     for key, preset in COMFY_VIDEO_FRAMES_PRESETS.items():
         active = preset["frames"] == current

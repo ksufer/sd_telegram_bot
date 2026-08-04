@@ -21,6 +21,7 @@ from config import (
     COMFY_PROGRESS_HEARTBEAT_INTERVAL,
     COMFY_SIZE_PRESETS,
     COMFY_VIDEO_FRAMES_PRESETS,
+    DEFAULT_VIDEO_FRAMES_KEY,
     COMFY_LORA_VARIANTS,
     COMFY_PROMPT_OPTIMIZE_MODES,
     NSFW_BODY_KEYWORDS,
@@ -179,9 +180,10 @@ def _apply_dimensions(workflow: dict, wf_config: dict, settings: dict) -> None:
         _set_node_input(workflow, wf_config["video_height_node"],
                         wf_config["video_height_key"], h)
     if "video_frames_node" in wf_config:
-        frames_key = str(settings.get("comfy_video_frames", 81))
+        frames_key = str(settings.get("comfy_video_frames",
+                                      COMFY_VIDEO_FRAMES_PRESETS[DEFAULT_VIDEO_FRAMES_KEY]["frames"]))
         cfg = COMFY_VIDEO_FRAMES_PRESETS.get(frames_key,
-                                             COMFY_VIDEO_FRAMES_PRESETS["81"])
+                                             COMFY_VIDEO_FRAMES_PRESETS[DEFAULT_VIDEO_FRAMES_KEY])
         _set_node_input(workflow, wf_config["video_frames_node"],
                         wf_config["video_frames_key"], cfg["frames"])
 

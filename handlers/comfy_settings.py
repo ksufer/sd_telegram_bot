@@ -451,6 +451,7 @@ async def pick_comfy_workflow(update, context):
     if context.user_data:
         context.user_data.pop("_firstlast_start_frame", None)
         context.user_data.pop("_firstlast_end_frame", None)
+        context.user_data.pop("_file_prompt", None)
 
     await safe_answer(query, f"Workflow: {wf_config['label']}")
     text, markup = _comfy_settings_menu(settings)

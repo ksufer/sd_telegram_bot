@@ -61,12 +61,23 @@ def _clean_caption(message, context) -> str:
 
 
 def _clear_firstlast_state(user_data: dict | None) -> None:
-    """清除 firstlast-video 多步交互状态。"""
+    """清除 firstlast-video 多步交互状态（含单图等待文字与文件提示词）。"""
     if not user_data:
         return
     user_data.pop("_firstlast_start_frame", None)
     user_data.pop("_firstlast_end_frame", None)
     user_data.pop("_firstlast_caption", None)
+    user_data.pop("_file_prompt", None)
+
+
+def _decode_text_file(raw: bytes) -> str:
+    """解码用户上传的提示词文件（UTF-8 带/不带 BOM → GBK 容错）。"""
+    for enc in ("utf-8-sig", "utf-8", "gbk"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
 
 
 # ═══ 流程辅助函数（抽取重复的额度检查/上传/入队逻辑） ═══
@@ -343,10 +354,19 @@ async def handle_text(update, context):
         await message.reply_text("提示词不能为空，请重新输入。")
         return
 
+    # 单图视频工作流：图片已缓存 → 本次文字作为提示词生成
+    _pending_single_image = None
+    if (settings.get("backend") == "comfyui" and context.user_data is not None
+            and wf_config.get("output_type") == "video"
+            and wf_config.get("load_image_node") and not wf_config.get("load_image_nodes")
+            and context.user_data.get("_firstlast_start_frame")
+            and _firstlast_frames is None):
+        _pending_single_image = context.user_data["_firstlast_start_frame"]
+
     # 图生图工作流拦截纯文字消息（多轮编辑未触发时）
     # firstlast-video: 已收到首尾帧时正常创建任务，无帧时提示发首帧
     if settings.get("backend") == "comfyui":
-        if wf_config.get("is_img2img") and not _firstlast_frames:
+        if wf_config.get("is_img2img") and not _firstlast_frames and not _pending_single_image:
             # 多图工作流已收到第一张图 → 提示发第二张（而非笼统的"发首帧/发图片"）
             if (wf_config.get("load_image_nodes") and context.user_data
                     and context.user_data.get("_firstlast_start_frame")):
@@ -361,7 +381,8 @@ async def handle_text(update, context):
                 )
             elif wf_config.get("output_type") == "video":
                 await message.reply_text(
-                    "当前工作流是图生视频模式，请发送图片，并可在图片说明中填写提示词。"
+                    "当前工作流是图生视频模式，请先发送图片，"
+                    "再发送描述文字作为提示词（支持长文本，或发送 .txt 文件）。"
                 )
             else:
                 await message.reply_text("当前工作流是图生图模式，请直接发送图片。")
@@ -380,6 +401,8 @@ async def handle_text(update, context):
     task_settings = copy.deepcopy(settings)
     if _firstlast_frames:
         task_settings["_uploaded_images"] = _firstlast_frames
+    elif _pending_single_image:
+        task_settings["_uploaded_image"] = _pending_single_image
 
     task = GenerationTask(
         user_id=user_id,
@@ -403,7 +426,7 @@ async def handle_text(update, context):
         return
 
     # enqueue 成功后清理 firstlast 状态（B1 修复：只在成功路径清除）
-    if _firstlast_frames:
+    if _firstlast_frames or _pending_single_image:
         _clear_firstlast_state(context.user_data)
 
 
@@ -753,12 +776,44 @@ async def handle_photo(update, context):
             _firstlast_frames = {roles[0]: start_frame, roles[1]: end_frame}
             _firstlast_prompt = caption
         else:
-            # 无 caption → 提示输入文字，不扣额度
-            await message.reply_text("✅ 已收到第二张图片，请发送编辑描述文字。")
-            return
+            file_prompt = user_data.get("_file_prompt", "")
+            if file_prompt:
+                start_frame = user_data.get("_firstlast_start_frame")
+                end_frame = user_data.get("_firstlast_end_frame")
+                _firstlast_frames = {roles[0]: start_frame, roles[1]: end_frame}
+                _firstlast_prompt = file_prompt
+            else:
+                # 无 caption → 提示输入文字，不扣额度
+                await message.reply_text("✅ 已收到第二张图片，请发送编辑描述文字。")
+                return
     else:
         _firstlast_frames = None
         _firstlast_prompt = None
+        # 单图视频工作流：无 caption/文件提示词且无缓存图 → 缓存图片等待文字
+        # （Telegram caption 仅 1024 字符，文字可用足 4096）
+        if (wf_config.get("output_type") == "video"
+                and wf_config.get("load_image_node") and not wf_config.get("load_image_nodes")):
+            user_data = context.user_data
+            caption = _clean_caption(message, context)
+            file_prompt = (user_data or {}).get("_file_prompt", "")
+            if (not caption and not file_prompt and user_data is not None
+                    and not user_data.get("_firstlast_start_frame")):
+                try:
+                    photo_file = await message.photo[-1].get_file()
+                    image_bytes = io.BytesIO()
+                    await photo_file.download_to_memory(image_bytes)
+                    image_bytes.seek(0)
+                    uploaded_name = await comfy_api.upload_image(image_bytes.read())
+                except Exception as e:
+                    logger.error("图片上传失败: %s", e)
+                    await message.reply_text(f"上传图片失败: {e}")
+                    return
+                user_data["_firstlast_start_frame"] = uploaded_name
+                await message.reply_text(
+                    "✅ 已收到图片，请发送描述文字作为提示词（支持长文本，也可发送 .txt 文件），"
+                    "发送 /cancel 可取消。"
+                )
+                return
 
     # 额度检查
     ok, credit_charged, err = await _check_and_charge_credit(user_id)
@@ -810,7 +865,9 @@ async def handle_photo(update, context):
     if _firstlast_frames:
         prompt_text = _firstlast_prompt
     elif wf_config.get("use_caption_as_prompt"):
-        prompt_text = _clean_caption(message, context)
+        # 文件提示词优先于 caption（caption 仅 1024 字符）
+        file_prompt = (context.user_data or {}).get("_file_prompt", "") if context.user_data else ""
+        prompt_text = file_prompt or _clean_caption(message, context)
     else:
         prompt_text = ""
 
@@ -836,8 +893,136 @@ async def handle_photo(update, context):
         return
 
     # enqueue 成功后清理 firstlast 状态（B1 修复：只在成功路径清除）
-    if _firstlast_frames and context.user_data:
+    if ((_firstlast_frames or (context.user_data and context.user_data.get("_file_prompt")))
+            and context.user_data):
         _clear_firstlast_state(context.user_data)
+
+
+async def handle_document(update, context):
+    """文件提示词：.txt/.md/.json 内容作为生成提示词（突破 Telegram 4096 字符限制）。
+
+    分派：已缓存图片（flf2v 双图 / 单图视频）或文生工作流 → 直接生成；
+    其余图生图工作流 → 存为待用提示词，发图后自动使用。
+    """
+    message = update.effective_message
+    if message is None or message.document is None:
+        return
+    chat = update.effective_chat
+    user = update.effective_user
+    user_id = user.id if user else (message.sender_chat.id if message.sender_chat else 0)
+    if not is_authorized(user_id, chat.id, chat.type):
+        return
+
+    refresh_workflows()
+
+    # 群聊中需要 @bot 或回复 bot 消息才触发
+    if chat.type in ("group", "supergroup"):
+        is_reply_to_bot = (
+            message.reply_to_message
+            and message.reply_to_message.from_user
+            and message.reply_to_message.from_user.id == context.bot.id
+        )
+        if not is_reply_to_bot:
+            caption = message.caption or ""
+            entities = (message.parse_caption_entities(types=[MessageEntity.MENTION])
+                        if caption else {})
+            mentioned = any(
+                text.lower() == f"@{context.bot.username.lower()}"
+                for text in entities.values()
+            )
+            if not mentioned:
+                return
+
+    doc = message.document
+    ext = doc.file_name.rsplit(".", 1)[-1].lower() if doc.file_name else ""
+    if ext not in ("txt", "md", "json"):
+        await message.reply_text("仅支持 .txt / .md / .json 文本文件作为提示词。")
+        return
+    if doc.file_size and doc.file_size > 100_000:
+        await message.reply_text("文件过大（>100KB）。")
+        return
+
+    # 下载 + 解码（UTF-8 带/不带 BOM → GBK 容错）
+    try:
+        file = await doc.get_file()
+        buf = io.BytesIO()
+        await file.download_to_memory(buf)
+        content = _decode_text_file(buf.getvalue()).strip()
+    except Exception as e:
+        logger.error("提示词文件下载失败: %s", e)
+        await message.reply_text(f"文件下载失败: {e}")
+        return
+    if not content:
+        await message.reply_text("文件内容为空。")
+        return
+
+    if context.user_data is not None:
+        settings = _ensure_settings(context, user_id)
+    else:
+        settings = copy.deepcopy(DEFAULT_USER_SETTINGS)
+    if settings.get("backend") != "comfyui":
+        await message.reply_text("文件提示词仅支持 ComfyUI 模式。")
+        return
+
+    wf_config = COMFY_WORKFLOWS.get(settings.get("comfy_workflow", COMFY_DEFAULT_WORKFLOW), {})
+    user_data = context.user_data if context.user_data is not None else {}
+
+    # 分派：直接生成 or 存为待用提示词
+    start_frame = user_data.get("_firstlast_start_frame")
+    end_frame = user_data.get("_firstlast_end_frame")
+    uploaded_images = None
+    uploaded_image = None
+    if start_frame and end_frame and wf_config.get("load_image_nodes"):
+        roles = list(wf_config["load_image_nodes"].keys())
+        uploaded_images = {roles[0]: start_frame, roles[1]: end_frame}
+    elif start_frame and wf_config.get("load_image_node") and not wf_config.get("load_image_nodes"):
+        uploaded_image = start_frame
+    elif not wf_config.get("is_img2img"):
+        pass  # 文生工作流（t2v 等）
+    else:
+        user_data["_file_prompt"] = content
+        await message.reply_text("📄 提示词已保存，请发送图片开始生成。")
+        return
+
+    # 直接生成（复用 handle_text 的额度/入队流程）
+    ok, credit_charged, err = await _check_and_charge_credit(user_id)
+    if not ok:
+        await message.reply_text(err)
+        return
+
+    status_id = await _create_status_message(message)
+    reply_to = message.message_id if chat.type in ("group", "supergroup") else None
+
+    task_settings = copy.deepcopy(settings)
+    if uploaded_images:
+        task_settings["_uploaded_images"] = uploaded_images
+    elif uploaded_image:
+        task_settings["_uploaded_image"] = uploaded_image
+
+    task = GenerationTask(
+        user_id=user_id,
+        chat_id=chat.id,
+        prompt=content,
+        settings=task_settings,
+        status_message_id=status_id,
+        original_message_id=message.message_id,
+        reply_to_message_id=reply_to,
+        credit_charged=credit_charged,
+    )
+
+    try:
+        queue = context.bot_data["queue"]
+        await _enqueue_and_notify(task, queue, context, chat.id, status_id)
+    except Exception:
+        logger.error("用户 %s 入队失败（文件提示词）", user_id, exc_info=True)
+        if credit_charged:
+            await credits.refund_one(user_id)
+        await message.reply_text("任务提交失败，请稍后重试。")
+        return
+
+    # enqueue 成功后清理缓存状态
+    if user_data:
+        _clear_firstlast_state(user_data)
 
 
 def get_handlers() -> list:
@@ -848,6 +1033,10 @@ def get_handlers() -> list:
         MessageHandler(
             filters.PHOTO & _user_auth_filter(),
             handle_photo,
+        ),
+        MessageHandler(
+            filters.Document.ALL & _user_auth_filter(),
+            handle_document,
         ),
         MessageHandler(
             filters.TEXT & ~filters.COMMAND & _user_auth_filter(),

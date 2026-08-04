@@ -115,6 +115,7 @@ _DEFAULT_WORKFLOW_REGISTRY = [
             "直接发送描述词即可\n"
             "例如：a cat walking on the beach, cinematic lighting\n\n"
             "提示词可同时描述镜头、动作与音频（对白/音效/音乐）\n"
+            "长提示词可发送 .txt 文件作为提示词（无长度限制）\n"
             "可在 ComfyUI 设置中调整视频方向、画质和长度"
         ),
         "backend": "comfyui",
@@ -128,9 +129,12 @@ _DEFAULT_WORKFLOW_REGISTRY = [
         "description": "上传图片，AI 生成短视频（MiniMax H3）",
         "how_to": (
             "发送一张图片（可附带描述词）\n"
+            "也可先发图片、再发送描述文字作为提示词（支持长文本）\n"
             "例如：发一张风景照 → 生成动态视频\n\n"
-            "提示词可同时描述镜头、动作与音频（对白/音效/音乐）\n"
-            "可在 ComfyUI 设置中调整视频方向和长度"
+            "视频比例自动跟随首帧图片\n"
+            "长提示词可发送 .txt 文件作为提示词（无长度限制）\n"
+            "可在 ComfyUI 设置中调整画质和长度\n"
+            "提示词可同时描述镜头、动作与音频（对白/音效/音乐）"
         ),
         "backend": "comfyui",
         "comfy_workflow": "minimax-h3-i2v",
@@ -147,6 +151,8 @@ _DEFAULT_WORKFLOW_REGISTRY = [
             "3. 如未附带描述，再发送文字说明\n\n"
             "例如：首帧=坐着的猫，尾帧=站立的猫\n"
             "描述=cat slowly standing up\n\n"
+            "视频比例自动跟随首帧图片\n"
+            "长提示词可发送 .txt 文件作为提示词（无长度限制）\n"
             "提示词可同时描述镜头、动作与音频（对白/音效/音乐）"
         ),
         "backend": "comfyui",

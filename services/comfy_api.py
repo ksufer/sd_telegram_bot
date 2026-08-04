@@ -491,12 +491,49 @@ def validate_workflow() -> None:
         elif "load_image_node" in wf:
             _set_node_input(workflow, wf["load_image_node"], wf["load_image_key"], "test.png")
         if "video_width_node" in wf:
-            _set_node_input(workflow, wf["video_width_node"], wf["video_width_key"], 480)
-            _set_node_input(workflow, wf["video_height_node"], wf["video_height_key"], 848)
+            _validate_node_input(workflow, wf, wf_key, "video_width_node",
+                                 "video_width_key", 480)
+            _validate_node_input(workflow, wf, wf_key, "video_height_node",
+                                 "video_height_key", 848)
+        if "video_selector_node" in wf:
+            _validate_node_input(workflow, wf, wf_key, "video_selector_node",
+                                 "video_selector_aspect_key", "9:16 (Portrait Widescreen)")
+            _validate_node_input(workflow, wf, wf_key, "video_selector_node",
+                                 "video_selector_mp_key", 0.4)
+        if "video_megapixels_node" in wf:
+            _validate_node_input(workflow, wf, wf_key, "video_megapixels_node",
+                                 "video_megapixels_key", 0.4)
         if "video_frames_node" in wf:
-            _set_node_input(workflow, wf["video_frames_node"], wf["video_frames_key"], 81)
+            _validate_node_input(workflow, wf, wf_key, "video_frames_node",
+                                 "video_frames_key", 81)
+        if "video_duration_node" in wf:
+            _validate_node_input(workflow, wf, wf_key, "video_duration_node",
+                                 "video_duration_key", 5.17)
 
     logger.info("所有 ComfyUI workflow 校验通过")
+
+
+def _validate_node_input(workflow: dict, wf: dict, wf_key: str,
+                         node_field: str, key_field: str, value) -> None:
+    """注入校验：key 必须已存在于节点 inputs。
+
+    _set_node_input 对不存在的 key 是静默创建（dict 赋值），需显式检查，
+    否则配置错误只能在真实生成时暴露。
+    """
+    actual_key = wf[key_field]
+    node_ids = wf[node_field] if isinstance(wf[node_field], list) else [wf[node_field]]
+    for nid in node_ids:
+        node = workflow.get(str(nid))
+        if node is None:
+            raise ComfyWorkflowError(
+                f"Workflow '{wf_key}': {node_field} '{nid}' 不存在"
+            )
+        if actual_key not in node.get("inputs", {}):
+            raise ComfyWorkflowError(
+                f"Workflow '{wf_key}': {key_field} '{actual_key}' "
+                f"不在节点 {nid} 的 inputs 中"
+            )
+    _set_node_input(workflow, wf[node_field], actual_key, value)
 
 
 # ── 模型列表缓存与解析 ─────────────────────────────────────

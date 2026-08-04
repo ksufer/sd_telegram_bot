@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "key": "minimax-h3-i2v",
+  "enabled": true,
+  "menu": {
+    "emoji": "🎬",
+    "label": "图生视频",
+    "description": "上传图片，AI 生成短视频（MiniMax H3）",
+    "how_to": "发送一张图片（可附带描述词）\n也可先发图片、再发送描述文字作为提示词（支持长文本）\n例如：发一张风景照 → 生成动态视频\n\n视频比例自动跟随首帧图片\n长提示词可发送 .txt 文件作为提示词（无长度限制）\n可在 ComfyUI 设置中调整画质和长度\n提示词可同时描述镜头、动作与音频（对白/音效/音乐）",
+    "input_type": "photo",
+    "backend": "comfyui"
+  },
+  "comfy": {
+    "label": "图生视频（MiniMax H3）",
+    "is_img2img": true,
+    "use_caption_as_prompt": true,
+    "model_selectable": false,
+    "output_type": "video",
+    "prompt_node": "105:104",
+    "prompt_key": "prompt",
+    "seed_node": "105:15",
+    "seed_key": "noise_seed",
+    "load_image_node": "114",
+    "load_image_key": "image",
+    "video_megapixels_node": "119",
+    "video_megapixels_key": "megapixels",
+    "video_duration_node": "105:111",
+    "video_duration_key": "value",
+    "default_model": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "workflow_file": "video_minimax_h3_i2v.json"
+  },
+  "user_configurable": [
+    "comfy_seed",
+    "comfy_translate",
+    "comfy_prompt",
+    "comfy_video_resolution",
+    "comfy_video_frames"
+  ]
+}

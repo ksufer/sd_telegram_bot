@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "key": "minimax-h3-t2v",
+  "enabled": true,
+  "menu": {
+    "emoji": "🎥",
+    "label": "文生视频",
+    "description": "输入描述词，AI 生成视频（MiniMax H3）",
+    "how_to": "直接发送描述词即可\n例如：a cat walking on the beach, cinematic lighting\n\n提示词可同时描述镜头、动作与音频（对白/音效/音乐）\n长提示词可发送 .txt 文件作为提示词（无长度限制）\n可在 ComfyUI 设置中调整视频方向、画质和长度",
+    "input_type": "text",
+    "backend": "comfyui"
+  },
+  "comfy": {
+    "label": "文生视频（MiniMax H3）",
+    "is_img2img": false,
+    "output_type": "video",
+    "model_selectable": false,
+    "prompt_node": "105:104",
+    "prompt_key": "prompt",
+    "seed_node": "105:15",
+    "seed_key": "noise_seed",
+    "video_selector_node": "115",
+    "video_selector_aspect_key": "aspect_ratio",
+    "video_selector_mp_key": "megapixels",
+    "video_duration_node": "105:111",
+    "video_duration_key": "value",
+    "default_model": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "workflow_file": "video_minimax_h3_t2v.json"
+  },
+  "user_configurable": [
+    "comfy_seed",
+    "comfy_translate",
+    "comfy_prompt",
+    "comfy_video_aspect",
+    "comfy_video_resolution",
+    "comfy_video_frames"
+  ]
+}

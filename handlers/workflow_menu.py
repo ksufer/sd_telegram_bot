@@ -12,6 +12,7 @@ from config import (
     COMFY_VIDEO_ASPECTS,
     COMFY_VIDEO_RESOLUTIONS,
     COMFY_VIDEO_FRAMES_PRESETS,
+    DEFAULT_VIDEO_FRAMES_KEY,
 )
 from handlers import auth_callback, _user_auth_filter
 from handlers.common import safe_answer, reply_menu, get_user_id, refresh_workflows
@@ -143,7 +144,8 @@ def _build_workflow_detail(workflow_entry: dict, settings: dict) -> tuple[str, I
         aspect_label = COMFY_VIDEO_ASPECTS.get(aspect, {}).get("label", aspect)
         resolution = settings.get("comfy_video_resolution", "480p")
         resolution_label = COMFY_VIDEO_RESOLUTIONS.get(resolution, {}).get("label", resolution)
-        frames_key = str(settings.get("comfy_video_frames", 81))
+        frames_key = str(settings.get("comfy_video_frames",
+                                      COMFY_VIDEO_FRAMES_PRESETS[DEFAULT_VIDEO_FRAMES_KEY]["frames"]))
         frames_label = COMFY_VIDEO_FRAMES_PRESETS.get(frames_key, {}).get("label", frames_key)
         if "comfy_video_aspect" in uc:
             parts.append(f"比例={aspect_label}")

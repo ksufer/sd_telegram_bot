@@ -352,7 +352,7 @@ async def handle_text(update, context):
                     and context.user_data.get("_firstlast_start_frame")):
                 await message.reply_text("已收到第一张图片，请发送第二张图片（可附带文字描述）。")
                 return
-            if wf_key == "firstlast-video":
+            if wf_key in ("firstlast-video", "minimax-h3-flf2v"):
                 await message.reply_text("当前工作流是首尾帧生视频模式，请先发送首帧图片。")
             elif wf_key == "qwen-image-edit":
                 await message.reply_text(

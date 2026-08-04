@@ -170,6 +170,10 @@ def _apply_dimensions(workflow: dict, wf_config: dict, settings: dict) -> None:
         aspect = settings.get("comfy_video_aspect", "9:16")
         resolution = settings.get("comfy_video_resolution", "480p")
         w, h = compute_video_dimensions(aspect, resolution)
+        mult = wf_config.get("video_dim_multiple")
+        if mult:
+            w = (w + mult // 2) // mult * mult
+            h = (h + mult // 2) // mult * mult
         _set_node_input(workflow, wf_config["video_width_node"],
                         wf_config["video_width_key"], w)
         _set_node_input(workflow, wf_config["video_height_node"],

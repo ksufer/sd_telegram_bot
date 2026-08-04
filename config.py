@@ -107,17 +107,47 @@ _DEFAULT_WORKFLOW_REGISTRY = [
         "input_type": "photo",
     },
     {
-        "key": "image-to-video",
+        "key": "minimax-h3-t2v",
+        "emoji": "🎥",
+        "label": "文生视频",
+        "description": "输入描述词，AI 生成视频（MiniMax H3）",
+        "how_to": (
+            "直接发送描述词即可\n"
+            "例如：a cat walking on the beach, cinematic lighting\n\n"
+            "可在 ComfyUI 设置中调整视频方向、画质和长度"
+        ),
+        "backend": "comfyui",
+        "comfy_workflow": "minimax-h3-t2v",
+        "input_type": "text",
+    },
+    {
+        "key": "minimax-h3-i2v",
         "emoji": "🎬",
         "label": "图生视频",
-        "description": "上传图片，AI 生成短视频",
+        "description": "上传图片，AI 生成短视频（MiniMax H3）",
         "how_to": (
             "发送一张图片（可附带描述词）\n"
             "例如：发一张风景照 → 生成动态视频\n\n"
             "可在 ComfyUI 设置中调整视频方向和长度"
         ),
         "backend": "comfyui",
-        "comfy_workflow": "image-to-video",
+        "comfy_workflow": "minimax-h3-i2v",
+        "input_type": "photo",
+    },
+    {
+        "key": "minimax-h3-flf2v",
+        "emoji": "🎞️",
+        "label": "首尾帧生视频",
+        "description": "上传首帧+尾帧图片，AI 生成过渡视频（MiniMax H3）",
+        "how_to": (
+            "1. 先发送首帧图片（群聊需 @bot）\n"
+            "2. 再发送尾帧图片，可附带文字描述（群聊需 @bot）\n"
+            "3. 如未附带描述，再发送文字说明\n\n"
+            "例如：首帧=坐着的猫，尾帧=站立的猫\n"
+            "描述=cat slowly standing up"
+        ),
+        "backend": "comfyui",
+        "comfy_workflow": "minimax-h3-flf2v",
         "input_type": "photo",
     },
     {
@@ -134,22 +164,6 @@ _DEFAULT_WORKFLOW_REGISTRY = [
         "backend": "comfyui",
         "comfy_workflow": "sdxl",
         "input_type": "text",
-    },
-    {
-        "key": "firstlast-video",
-        "emoji": "🎞️",
-        "label": "首尾帧生视频",
-        "description": "上传首帧+尾帧图片，AI 生成过渡视频",
-        "how_to": (
-            "1. 先发送首帧图片（群聊需 @bot）\n"
-            "2. 再发送尾帧图片，可附带文字描述（群聊需 @bot）\n"
-            "3. 如未附带描述，再发送文字说明\n\n"
-            "例如：首帧=坐着的猫，尾帧=站立的猫\n"
-            "描述=cat slowly standing up"
-        ),
-        "backend": "comfyui",
-        "comfy_workflow": "firstlast-video",
-        "input_type": "photo",
     },
     {
         "key": "qwen-2pic-edit",
@@ -354,29 +368,70 @@ _DEFAULT_COMFY_WORKFLOWS = {
         "default_model": "Qwen-Rapid-AIO-NSFW-v11.1.safetensors",
         "use_caption_as_prompt": True,
     },
-    "image-to-video": {
-        "label": "Image-to-Video（图生视频）",
-        "path": "data/image_to_video.json",
+    "minimax-h3-t2v": {
+        "label": "文生视频（MiniMax H3）",
+        "is_img2img": False,
+        "output_type": "video",
+        "model_selectable": False,
+        "prompt_node": "105:104",
+        "prompt_key": "prompt",
+        "seed_node": "105:15",
+        "seed_key": "noise_seed",
+        "video_width_node": "105:104",
+        "video_width_key": "width",
+        "video_height_node": "105:104",
+        "video_height_key": "height",
+        "video_frames_node": "105:111",
+        "video_frames_key": "value",
+        "video_dim_multiple": 32,
+        "default_model": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "workflow_file": "video_minimax_h3_t2v.json",
+    },
+    "minimax-h3-i2v": {
+        "label": "图生视频（MiniMax H3）",
         "is_img2img": True,
         "use_caption_as_prompt": True,
         "model_selectable": False,
         "output_type": "video",
-        "prompt_node": "129:93",
-        "prompt_key": "text",
-        "seed_node": "129:86",
+        "prompt_node": "105:104",
+        "prompt_key": "prompt",
+        "seed_node": "105:15",
         "seed_key": "noise_seed",
-        "model_node": "129:95",
-        "model_key": "unet_name",
-        "model_loader_class": "UNETLoader",
-        "load_image_node": "97",
+        "load_image_node": "114",
         "load_image_key": "image",
-        "video_width_node": "129:98",
+        "video_width_node": "105:104",
         "video_width_key": "width",
-        "video_height_node": "129:98",
+        "video_height_node": "105:104",
         "video_height_key": "height",
-        "video_frames_node": "129:98",
-        "video_frames_key": "length",
-        "default_model": "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+        "video_frames_node": "105:111",
+        "video_frames_key": "value",
+        "video_dim_multiple": 32,
+        "default_model": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "workflow_file": "video_minimax_h3_i2v.json",
+    },
+    "minimax-h3-flf2v": {
+        "label": "首尾帧生视频（MiniMax H3）",
+        "is_img2img": True,
+        "use_caption_as_prompt": True,
+        "model_selectable": False,
+        "output_type": "video",
+        "prompt_node": "105:104",
+        "prompt_key": "prompt",
+        "seed_node": "105:15",
+        "seed_key": "noise_seed",
+        "load_image_nodes": {
+            "start": {"node": "114", "key": "image"},
+            "end": {"node": "121", "key": "image"},
+        },
+        "video_width_node": "105:104",
+        "video_width_key": "width",
+        "video_height_node": "105:104",
+        "video_height_key": "height",
+        "video_frames_node": "105:111",
+        "video_frames_key": "value",
+        "video_dim_multiple": 32,
+        "default_model": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "workflow_file": "video_minimax_h3_flf2v.json",
     },
     "sdxl": {
         "label": "SDXL（文生图）",
@@ -400,29 +455,6 @@ _DEFAULT_COMFY_WORKFLOWS = {
         "height_node": "5",
         "height_key": "height",
         "default_model": "miaomiaoHarem_v20.safetensors",
-    },
-    "firstlast-video": {
-        "label": "首尾帧生视频（Wan2.2）",
-        "path": "data/video_wan2_2_14B_flf2v.json",
-        "is_img2img": True,
-        "output_type": "video",
-        "model_selectable": False,
-        "use_caption_as_prompt": True,
-        "prompt_node": "6",
-        "prompt_key": "text",
-        "seed_node": "57",
-        "seed_key": "noise_seed",
-        "load_image_nodes": {
-            "start": {"node": "68", "key": "image"},
-            "end": {"node": "62", "key": "image"},
-        },
-        "video_width_node": "67",
-        "video_width_key": "width",
-        "video_height_node": "67",
-        "video_height_key": "height",
-        "video_frames_node": "67",
-        "video_frames_key": "length",
-        "default_model": "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
     },
     "qwen-2pic-edit": {
         "label": "Qwen 双图编辑",

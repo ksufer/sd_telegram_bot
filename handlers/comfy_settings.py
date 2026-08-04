@@ -63,11 +63,13 @@ def _add_dimension_rows(keyboard: list, info_lines: list,
     """追加尺寸/视频行（原 insert(1) 位置）。"""
     uc = wf_config.get("user_configurable", [])
     is_video = wf_config.get("output_type") == "video"
-    if (is_video
-            and {"comfy_video_aspect", "comfy_video_resolution", "comfy_video_frames"}.issubset(uc)
-            and wf_config.get("video_width_node") and wf_config.get("video_width_key")
-            and wf_config.get("video_height_node") and wf_config.get("video_height_key")
-            and wf_config.get("video_frames_node") and wf_config.get("video_frames_key")):
+    has_video_dims = (wf_config.get("video_width_node")
+                      or wf_config.get("video_selector_node")
+                      or wf_config.get("video_megapixels_node"))
+    has_video_len = (wf_config.get("video_frames_node")
+                     or wf_config.get("video_duration_node"))
+    if is_video and has_video_dims and has_video_len:
+        auto_aspect = bool(wf_config.get("video_megapixels_node"))
         aspect = settings.get("comfy_video_aspect", "9:16")
         aspect_cfg = COMFY_VIDEO_ASPECTS.get(aspect, COMFY_VIDEO_ASPECTS["9:16"])
         resolution = settings.get("comfy_video_resolution", "480p")
@@ -78,16 +80,24 @@ def _add_dimension_rows(keyboard: list, info_lines: list,
                                       COMFY_VIDEO_FRAMES_PRESETS[DEFAULT_VIDEO_FRAMES_KEY]["frames"]))
         frames_cfg = COMFY_VIDEO_FRAMES_PRESETS.get(frames_key,
                                                     COMFY_VIDEO_FRAMES_PRESETS[DEFAULT_VIDEO_FRAMES_KEY])
-        info_lines.append(f"视频比例: {aspect_cfg['label']}")
-        info_lines.append(f"视频画质: {resolution_cfg['label']} ({w}×{h})")
+        if "comfy_video_aspect" in uc:
+            info_lines.append(f"视频比例: {aspect_cfg['label']}")
+        info_lines.append(
+            f"视频画质: {resolution_cfg['label']}"
+            f"{'（比例跟随首帧）' if auto_aspect else f' ({w}×{h})'}"
+        )
         info_lines.append(f"视频长度: {frames_cfg['label']}")
-        keyboard.append([
-            InlineKeyboardButton("视频比例", callback_data="comfy_video_aspect"),
-            InlineKeyboardButton("视频画质", callback_data="comfy_video_resolution"),
-        ])
-        keyboard.append([
-            InlineKeyboardButton("视频长度", callback_data="comfy_video_length"),
-        ])
+        row = []
+        if "comfy_video_aspect" in uc:
+            row.append(InlineKeyboardButton("视频比例", callback_data="comfy_video_aspect"))
+        if "comfy_video_resolution" in uc:
+            row.append(InlineKeyboardButton("视频画质", callback_data="comfy_video_resolution"))
+        if row:
+            keyboard.append(row)
+        if "comfy_video_frames" in uc:
+            keyboard.append([
+                InlineKeyboardButton("视频长度", callback_data="comfy_video_length"),
+            ])
     elif (
         not wf_config.get("is_img2img", False)
         and _can_config_size(wf_config, uc)
@@ -573,13 +583,16 @@ def _comfy_video_aspect_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]
 def _comfy_video_resolution_menu(settings: dict) -> tuple[str, InlineKeyboardMarkup]:
     current = settings.get("comfy_video_resolution", "480p")
     aspect = settings.get("comfy_video_aspect", "9:16")
+    wf_key = settings.get("comfy_workflow", "")
+    wf_config = COMFY_WORKFLOWS.get(wf_key, {})
+    auto_aspect = bool(wf_config.get("video_megapixels_node"))
     text = "<b>选择视频画质</b>"
     keyboard = []
     for key, preset in COMFY_VIDEO_RESOLUTIONS.items():
         prefix = "✓ " if key == current else ""
-        w, h = compute_video_dimensions(aspect, key)
+        suffix = "" if auto_aspect else f" ({compute_video_dimensions(aspect, key)[0]}×{compute_video_dimensions(aspect, key)[1]})"
         keyboard.append([InlineKeyboardButton(
-            f"{prefix}{preset['label']} ({w}×{h})", callback_data=f"comfy_video_resolution:{key}"
+            f"{prefix}{preset['label']}{suffix}", callback_data=f"comfy_video_resolution:{key}"
         )])
     keyboard.append([InlineKeyboardButton("🔙 返回主菜单", callback_data="main_menu")])
     return text, InlineKeyboardMarkup(keyboard)

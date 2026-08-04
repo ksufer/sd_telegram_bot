@@ -380,13 +380,11 @@ _DEFAULT_COMFY_WORKFLOWS = {
         "prompt_key": "prompt",
         "seed_node": "105:15",
         "seed_key": "noise_seed",
-        "video_width_node": "105:104",
-        "video_width_key": "width",
-        "video_height_node": "105:104",
-        "video_height_key": "height",
-        "video_frames_node": "105:111",
-        "video_frames_key": "value",
-        "video_dim_multiple": 32,
+        "video_selector_node": "115",
+        "video_selector_aspect_key": "aspect_ratio",
+        "video_selector_mp_key": "megapixels",
+        "video_duration_node": "105:111",
+        "video_duration_key": "value",
         "default_model": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
         "workflow_file": "video_minimax_h3_t2v.json",
     },
@@ -402,15 +400,16 @@ _DEFAULT_COMFY_WORKFLOWS = {
         "seed_key": "noise_seed",
         "load_image_node": "114",
         "load_image_key": "image",
-        "video_width_node": "105:104",
-        "video_width_key": "width",
-        "video_height_node": "105:104",
-        "video_height_key": "height",
-        "video_frames_node": "105:111",
-        "video_frames_key": "value",
-        "video_dim_multiple": 32,
+        "video_megapixels_node": "119",
+        "video_megapixels_key": "megapixels",
+        "video_duration_node": "105:111",
+        "video_duration_key": "value",
         "default_model": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
         "workflow_file": "video_minimax_h3_i2v.json",
+        "user_configurable": [
+            "comfy_seed", "comfy_translate", "comfy_prompt",
+            "comfy_video_resolution", "comfy_video_frames",
+        ],
     },
     "minimax-h3-flf2v": {
         "label": "首尾帧生视频（MiniMax H3）",
@@ -426,15 +425,16 @@ _DEFAULT_COMFY_WORKFLOWS = {
             "start": {"node": "114", "key": "image"},
             "end": {"node": "121", "key": "image"},
         },
-        "video_width_node": "105:104",
-        "video_width_key": "width",
-        "video_height_node": "105:104",
-        "video_height_key": "height",
-        "video_frames_node": "105:111",
-        "video_frames_key": "value",
-        "video_dim_multiple": 32,
+        "video_megapixels_node": ["119", "122"],
+        "video_megapixels_key": "megapixels",
+        "video_duration_node": "105:111",
+        "video_duration_key": "value",
         "default_model": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
         "workflow_file": "video_minimax_h3_flf2v.json",
+        "user_configurable": [
+            "comfy_seed", "comfy_translate", "comfy_prompt",
+            "comfy_video_resolution", "comfy_video_frames",
+        ],
     },
     "sdxl": {
         "label": "SDXL（文生图）",
@@ -673,18 +673,21 @@ COMFY_SIZE_PRESETS = {
 }
 
 # ---- ComfyUI 视频比例预设 ----
+# rs_aspect: ResolutionSelector 节点 aspect_ratio 枚举值（与 /object_info 核对）
 COMFY_VIDEO_ASPECTS = {
-    "9:16": {"label": "9:16 竖版", "ratio": 9 / 16},
-    "16:9": {"label": "16:9 横版", "ratio": 16 / 9},
-    "4:3":  {"label": "4:3 横版",  "ratio": 4 / 3},
-    "3:4":  {"label": "3:4 竖版",  "ratio": 3 / 4},
-    "1:1":  {"label": "1:1 方形",  "ratio": 1 / 1},
+    "9:16": {"label": "9:16 竖版", "ratio": 9 / 16, "rs_aspect": "9:16 (Portrait Widescreen)"},
+    "16:9": {"label": "16:9 横版", "ratio": 16 / 9, "rs_aspect": "16:9 (Widescreen)"},
+    "4:3":  {"label": "4:3 横版",  "ratio": 4 / 3,  "rs_aspect": "4:3 (Standard)"},
+    "3:4":  {"label": "3:4 竖版",  "ratio": 3 / 4,  "rs_aspect": "3:4 (Portrait Standard)"},
+    "1:1":  {"label": "1:1 方形",  "ratio": 1 / 1,  "rs_aspect": "1:1 (Square)"},
 }
 
 # ---- ComfyUI 视频画质预设 ----
+# short_side: compute_video_dimensions 的短边语义（t2v 选择器/菜单显示）
+# megapixels: ImageScaleToTotalPixels 目标总像素（i2v/flf2v 自动比例链注入）
 COMFY_VIDEO_RESOLUTIONS = {
-    "480p": {"label": "480p", "short_side": 480},
-    "768p": {"label": "768p（原生）", "short_side": 768},
+    "480p": {"label": "480p", "short_side": 480, "megapixels": 0.4},
+    "768p": {"label": "768p（原生）", "short_side": 768, "megapixels": 1.0},
 }
 
 # MiniMax H3 官方分辨率上限（native canvas 768px 短边，cap 768x1344）

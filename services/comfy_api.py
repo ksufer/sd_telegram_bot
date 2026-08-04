@@ -20,6 +20,8 @@ from config import (
     COMFY_TIMEOUT,
     COMFY_PROGRESS_HEARTBEAT_INTERVAL,
     COMFY_SIZE_PRESETS,
+    COMFY_VIDEO_ASPECTS,
+    COMFY_VIDEO_RESOLUTIONS,
     COMFY_VIDEO_FRAMES_PRESETS,
     DEFAULT_VIDEO_FRAMES_KEY,
     COMFY_LORA_VARIANTS,
@@ -179,6 +181,24 @@ def _apply_dimensions(workflow: dict, wf_config: dict, settings: dict) -> None:
                         wf_config["video_width_key"], w)
         _set_node_input(workflow, wf_config["video_height_node"],
                         wf_config["video_height_key"], h)
+    if "video_selector_node" in wf_config:
+        # ResolutionSelector（t2v 无图场景）：注入比例枚举 + megapixels
+        aspect = settings.get("comfy_video_aspect", "9:16")
+        resolution = settings.get("comfy_video_resolution", "480p")
+        rs_aspect = COMFY_VIDEO_ASPECTS.get(aspect, COMFY_VIDEO_ASPECTS["9:16"])["rs_aspect"]
+        megapixels = COMFY_VIDEO_RESOLUTIONS.get(
+            resolution, COMFY_VIDEO_RESOLUTIONS["480p"])["megapixels"]
+        _set_node_input(workflow, wf_config["video_selector_node"],
+                        wf_config["video_selector_aspect_key"], rs_aspect)
+        _set_node_input(workflow, wf_config["video_selector_node"],
+                        wf_config["video_selector_mp_key"], megapixels)
+    if "video_megapixels_node" in wf_config:
+        # ImageScaleToTotalPixels（i2v/flf2v 自动比例链）：只注入画质
+        resolution = settings.get("comfy_video_resolution", "480p")
+        megapixels = COMFY_VIDEO_RESOLUTIONS.get(
+            resolution, COMFY_VIDEO_RESOLUTIONS["480p"])["megapixels"]
+        _set_node_input(workflow, wf_config["video_megapixels_node"],
+                        wf_config["video_megapixels_key"], megapixels)
     if "video_frames_node" in wf_config:
         frames_key = str(settings.get("comfy_video_frames",
                                       COMFY_VIDEO_FRAMES_PRESETS[DEFAULT_VIDEO_FRAMES_KEY]["frames"]))
@@ -186,6 +206,14 @@ def _apply_dimensions(workflow: dict, wf_config: dict, settings: dict) -> None:
                                              COMFY_VIDEO_FRAMES_PRESETS[DEFAULT_VIDEO_FRAMES_KEY])
         _set_node_input(workflow, wf_config["video_frames_node"],
                         wf_config["video_frames_key"], cfg["frames"])
+    if "video_duration_node" in wf_config:
+        # MiniMax H3 时长链（105:111 秒数 → 表达式 round(a*24) 还原帧数）
+        frames_key = str(settings.get("comfy_video_frames",
+                                      COMFY_VIDEO_FRAMES_PRESETS[DEFAULT_VIDEO_FRAMES_KEY]["frames"]))
+        cfg = COMFY_VIDEO_FRAMES_PRESETS.get(frames_key,
+                                             COMFY_VIDEO_FRAMES_PRESETS[DEFAULT_VIDEO_FRAMES_KEY])
+        _set_node_input(workflow, wf_config["video_duration_node"],
+                        wf_config["video_duration_key"], round(cfg["frames"] / 24, 2))
 
 
 def _apply_image_dimensions(workflow: dict, wf_config: dict, settings: dict) -> None:

@@ -56,6 +56,7 @@ codegraph affected [文件]    # 改动文件影响了哪些测试
 | `handlers/pipeline.py` | Pipeline 动态编排（主菜单「⛓ Pipeline」；步骤列表持久化在 `settings["pipeline_steps"]`，编排/增删/排序/运行） |
 | `handlers/rev_prompt.py` | 图片反推提示词交互（主菜单「🔍 反推提示词」；等待标记 `_waiting_input="rev_prompt"`，由 `handle_photo`/`handle_text` 顶部分发；扣 1 额度入队） |
 | `services/ollama_api.py` | Ollama 视觉模型反推（单次 `/api/chat` 同时产出 SD 标签词 + Krea 2 句子版 JSON；解析失败修复重试一次；请求 keep_alive 5m、结束显式卸载归还显存） |
+| `services/prompt_log.py` | 提示词日志（`data/prompt_log/<日期>/` 下每记录三件套：缩略图 jpg + 完整提示词 txt + 元数据 json；Bot/Web 生成成功均记录，失败仅记日志；收藏/删除供 Admin API 用） |
 
 ### 生成流程
 

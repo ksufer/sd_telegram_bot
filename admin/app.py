@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 import config
 from admin import auth, store, tasks, validators
-from services import comfy_api, storage
+from services import comfy_api, prompt_log, storage
 
 logger = logging.getLogger(__name__)
 
@@ -325,6 +325,44 @@ async def delete_history(result_id: str, request: Request):
     auth.require_csrf(request)
     if not store.delete_history(result_id):
         raise HTTPException(status_code=404, detail="结果不存在")
+    return {"ok": True}
+
+
+# ── 提示词日志 ──────────────────────────────────────────────
+
+@app.get("/api/prompt-log")
+async def prompt_log_list(request: Request, date: str | None = None):
+    """日期列表 + 指定日期（默认最新一天）的记录。"""
+    auth.require_auth(request)
+    days = prompt_log.list_days()
+    selected = date if date in days else (days[0] if days else None)
+    records = prompt_log.list_records(selected) if selected else []
+    return {"days": days, "date": selected, "records": records}
+
+
+@app.get("/api/prompt-log/{date}/{rid}/image")
+async def prompt_log_image(date: str, rid: str, request: Request):
+    auth.require_auth(request)
+    path = prompt_log.get_image_path(date, rid)
+    if not path:
+        raise HTTPException(status_code=404, detail="图片不存在")
+    return FileResponse(path, media_type="image/jpeg")
+
+
+@app.post("/api/prompt-log/{date}/{rid}/favorite")
+async def prompt_log_favorite(date: str, rid: str, request: Request):
+    auth.require_csrf(request)
+    body = await request.json()
+    if not prompt_log.set_favorite(date, rid, bool(body.get("favorite"))):
+        raise HTTPException(status_code=404, detail="记录不存在")
+    return {"ok": True}
+
+
+@app.delete("/api/prompt-log/{date}/{rid}")
+async def prompt_log_delete(date: str, rid: str, request: Request):
+    auth.require_csrf(request)
+    if not prompt_log.delete_record(date, rid):
+        raise HTTPException(status_code=404, detail="记录不存在")
     return {"ok": True}
 
 

@@ -2,7 +2,7 @@
 
 /* ═══════════════════════════════════════════════════════════════
    SD Admin 前端（vanilla JS，无框架无 CDN）
-   结构：常量 → 工具 → API → 认证 → Tab → 生成 → 历史 → 工作流管理
+   结构：常量 → 工具 → API → 认证 → Tab → 生成 → 历史 → 提示词日志 → 工作流管理
    安全约定：服务器/用户内容一律走 textContent，不用 innerHTML。
    ═══════════════════════════════════════════════════════════════ */
 
@@ -52,6 +52,10 @@ const state = {
   stopwatchTimer: null,
   taskStart: 0,
   history: [],          // GET /api/history
+  plogDays: [],         // GET /api/prompt-log → days
+  plogDate: null,       // 提示词日志当前选中日期
+  plogRecords: [],      // GET /api/prompt-log → records
+  plogFavOnly: false,   // 只看收藏
   editorKey: null,      // 编辑器当前 key
 };
 
@@ -206,6 +210,7 @@ function switchTab(name) {
   document.querySelectorAll(".tab-panel").forEach((p) => p.classList.add("hidden"));
   $(`#tab-${name}`).classList.remove("hidden");
   if (name === "history") loadHistory();
+  if (name === "promptlog") loadPromptLog();
   if (name === "workflows") { showEditorView(false); loadManage(); }
 }
 
@@ -882,7 +887,152 @@ async function deleteHistoryItem(item, closeOverlay) {
 }
 
 /* ════════════════════════════════════════════════════════════
-   Tab 3：工作流管理
+   Tab 3：提示词日志（data/prompt_log/，Bot 与 Web 生成都会记录）
+   ════════════════════════════════════════════════════════════ */
+
+const plogImageUrl = (date, id) =>
+  `/api/prompt-log/${encodeURIComponent(date)}/${encodeURIComponent(id)}/image`;
+
+async function loadPromptLog(date) {
+  try {
+    const qs = date ? `?date=${encodeURIComponent(date)}` : "";
+    const data = await api(`/api/prompt-log${qs}`);
+    state.plogDays = (data && data.days) || [];
+    state.plogDate = (data && data.date) || null;
+    state.plogRecords = (data && data.records) || [];
+  } catch (e) {
+    toast(e.message, "error");
+    return;
+  }
+  renderPlogToolbar();
+  renderPlogGrid();
+}
+
+function renderPlogToolbar() {
+  const sel = $("#plog-date");
+  sel.replaceChildren();
+  for (const d of state.plogDays) {
+    const opt = el("option", { value: d, text: d });
+    if (d === state.plogDate) opt.selected = true;
+    sel.append(opt);
+  }
+  sel.disabled = state.plogDays.length === 0;
+}
+
+function renderPlogGrid() {
+  const grid = $("#plog-grid");
+  grid.replaceChildren();
+  const records = state.plogFavOnly
+    ? state.plogRecords.filter((r) => r.favorite)
+    : state.plogRecords;
+  $("#plog-empty").classList.toggle("hidden", records.length > 0);
+  for (const rec of records) grid.append(plogCard(rec));
+}
+
+function plogCard(rec) {
+  const thumb = el("div", { class: "hist-thumb" });
+  if (rec.image) {
+    thumb.append(el("img", {
+      src: plogImageUrl(state.plogDate, rec.id), loading: "lazy", alt: rec.label || "",
+    }));
+  } else {
+    thumb.append(el("div", { class: "plog-noimg", text: "视频 / 无图" }));
+  }
+  return el("div", {
+    class: "hist-card plog-card", onclick: () => openPlogDetail(rec),
+  },
+    thumb,
+    rec.favorite ? el("span", { class: "plog-star", text: "★" }) : null,
+    el("div", { class: "hist-info" },
+      el("div", { class: "plog-preview", text: rec.final_prompt || "" }),
+      el("div", { class: "hist-meta" },
+        el("span", { text: rec.label || rec.workflow || "" }),
+        el("span", { text: fmtRelTime(rec.ts || 0) }))));
+}
+
+/** 详情浮层：大图 + 完整提示词（可复制）+ 元数据 + 收藏/删除。 */
+function openPlogDetail(rec) {
+  const root = $("#overlay-root");
+  root.replaceChildren();
+
+  const close = () => overlay.remove();
+
+  const favBtn = el("button", { class: "btn", type: "button" },
+    rec.favorite ? "取消收藏" : "收藏");
+  favBtn.addEventListener("click", async () => {
+    const fav = !rec.favorite;
+    try {
+      await api(
+        `/api/prompt-log/${encodeURIComponent(state.plogDate)}/${encodeURIComponent(rec.id)}/favorite`,
+        { method: "POST", json: { favorite: fav } });
+      rec.favorite = fav;
+      favBtn.textContent = fav ? "取消收藏" : "收藏";
+      renderPlogGrid();
+      toast(fav ? "已收藏" : "已取消收藏");
+    } catch (e) {
+      toast(e.message, "error");
+    }
+  });
+
+  const overlay = el("div", {
+    class: "overlay",
+    onclick: (e) => { if (e.target === overlay) close(); },
+  },
+    el("div", { class: "overlay-dialog" },
+      el("div", { class: "overlay-head" },
+        el("span", { class: "overlay-title", text: rec.label || rec.workflow || "提示词" }),
+        el("button", { class: "btn btn-ghost btn-sm", type: "button", onclick: close }, "关闭")),
+      rec.image ? el("div", { class: "overlay-media" },
+        el("img", { src: plogImageUrl(state.plogDate, rec.id), alt: rec.label || "" })) : null,
+      el("div", { class: "plog-prompt mono", text: rec.final_prompt || "" }),
+      el("table", { class: "meta-table" }, el("tbody",
+        metaRow("工作流", rec.label || rec.workflow),
+        metaRow("模型", rec.model),
+        metaRow("Seed", rec.seed),
+        metaRow("来源", rec.source === "web" ? "Web 面板" : "Telegram Bot"),
+        metaRow("用时", rec.elapsed != null ? `${rec.elapsed}秒` : null),
+        metaRow("时间", rec.ts ? fmtDateTime(rec.ts) : null),
+        (rec.prompt && rec.prompt !== rec.final_prompt)
+          ? metaRow("原始输入", rec.prompt) : null)),
+      el("div", { class: "overlay-actions" },
+        el("button", {
+          class: "btn btn-primary", type: "button",
+          onclick: () => copyPlogPrompt(rec),
+        }, "复制提示词"),
+        favBtn,
+        el("button", {
+          class: "btn btn-danger", type: "button",
+          onclick: () => deletePlogRecord(rec, close),
+        }, "删除"))));
+  root.append(overlay);
+}
+
+async function copyPlogPrompt(rec) {
+  try {
+    await navigator.clipboard.writeText(rec.final_prompt || "");
+    toast("提示词已复制");
+  } catch {
+    toast("复制失败，请手动选择复制", "error");
+  }
+}
+
+async function deletePlogRecord(rec, closeOverlay) {
+  if (!confirm("确定删除这条提示词记录？")) return;
+  try {
+    await api(
+      `/api/prompt-log/${encodeURIComponent(state.plogDate)}/${encodeURIComponent(rec.id)}`,
+      { method: "DELETE" });
+    state.plogRecords = state.plogRecords.filter((r) => r.id !== rec.id);
+    renderPlogGrid();
+    if (closeOverlay) closeOverlay();
+    toast("已删除");
+  } catch (e) {
+    toast(e.message, "error");
+  }
+}
+
+/* ════════════════════════════════════════════════════════════
+   Tab 4：工作流管理
    ════════════════════════════════════════════════════════════ */
 
 function showEditorView(show) {
@@ -1092,6 +1242,12 @@ function bindEvents() {
 
   $("#generate-btn").addEventListener("click", onGenerate);
   $("#cancel-poll-btn").addEventListener("click", cancelPolling);
+
+  $("#plog-date").addEventListener("change", (e) => loadPromptLog(e.target.value));
+  $("#plog-fav-only").addEventListener("change", (e) => {
+    state.plogFavOnly = e.target.checked;
+    renderPlogGrid();
+  });
 
   $("#wf-create-btn").addEventListener("click", createWorkflow);
   $("#wf-upload-btn").addEventListener("click", () => $("#wf-upload-input").click());

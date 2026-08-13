@@ -16,7 +16,7 @@ from config import COMFY_VIDEO_ASPECTS, COMFY_VIDEO_RESOLUTIONS, COMFY_VIDEO_FRA
 from config import DEFAULT_VIDEO_FRAMES_KEY
 from config import ADMIN_USER_ID, WORKFLOW_REGISTRY, COMFY_WORKFLOWS
 from config import COMFY_PROGRESS_HEARTBEAT_INTERVAL
-from services import sd_api, comfy_api, credits, ollama_api
+from services import sd_api, comfy_api, credits, ollama_api, prompt_log
 from services.network import is_network_error, retry_on_network_error
 from services.translator import translate
 from services.face_prompt import extract_face_prompt
@@ -491,6 +491,23 @@ class GenerationQueue:
         # 发送结果（失败时已退款并告知用户，保留状态消息作为告知渠道）
         sent = await self._send_result(task, raw_data, info, reply_markup,
                                        wf_config, updater)
+
+        # 提示词日志：完整提示词 + 缩略图按日落盘（data/prompt_log/），失败不影响主流程
+        if sent:
+            prompt_log.log_generation(
+                prompt=task.prompt,
+                final_prompt=display_prompt,
+                seed=actual_seed,
+                model=(settings.get("comfy_model") if backend == "comfyui"
+                       else settings.get("model") or ""),
+                wf_key=(settings.get("comfy_workflow", "") if backend == "comfyui"
+                        else "sd-webui"),
+                label=wf_config.get("label", "") if wf_config else "SD WebUI",
+                source="bot",
+                user_id=task.user_id,
+                elapsed=elapsed,
+                image_bytes=raw_data if isinstance(raw_data, bytes) else None,
+            )
 
         # Pipeline 自动连跑：回注输出图并组下一步任务入队
         if sent:

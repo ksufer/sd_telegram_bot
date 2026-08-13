@@ -27,6 +27,7 @@
     <nav class="tabs">
       <button class="tab active" data-tab="generate" type="button">生成</button>
       <button class="tab" data-tab="history" type="button">历史</button>
+      <button class="tab" data-tab="promptlog" type="button">提示词</button>
       <button class="tab" data-tab="workflows" type="button">工作流</button>
     </nav>
     <button id="logout-btn" class="btn btn-ghost" type="button">退出登录</button>
@@ -66,7 +67,19 @@
       <div id="history-empty" class="empty-state hidden">暂无生成记录</div>
     </section>
 
-    <!-- Tab 3：工作流 -->
+    <!-- Tab 3：提示词日志 -->
+    <section id="tab-promptlog" class="tab-panel hidden">
+      <div class="plog-toolbar">
+        <select id="plog-date" class="ctl"></select>
+        <label class="plog-fav-filter">
+          <input type="checkbox" id="plog-fav-only"> 只看收藏
+        </label>
+      </div>
+      <div id="plog-grid" class="history-grid"></div>
+      <div id="plog-empty" class="empty-state hidden">暂无提示词记录</div>
+    </section>
+
+    <!-- Tab 4：工作流 -->
     <section id="tab-workflows" class="tab-panel hidden">
       <div id="wf-manage-view">
         <div class="wf-manage-actions">

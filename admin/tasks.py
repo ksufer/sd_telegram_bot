@@ -10,7 +10,7 @@ import random
 import time
 import uuid
 
-from services import comfy_api
+from services import comfy_api, prompt_log
 from services.face_prompt import extract_face_prompt
 from services.translator import translate
 
@@ -130,6 +130,19 @@ async def _run(task: dict, wf_key: str, prompt: str, settings: dict,
             "settings": {k: v for k, v in settings.items() if not k.startswith("_")},
         }
         task["result_id"] = store.save_result(meta, output.data, ext)
+        # 提示词日志：完整提示词 + 缩略图按日落盘（与 Bot 端同一目录），失败不影响主流程
+        prompt_log.log_generation(
+            prompt=prompt,
+            final_prompt=optimized_prompt or translated,
+            seed=actual_seed,
+            model=settings.get("comfy_model", ""),
+            wf_key=wf_key,
+            label=wf_config.get("label", wf_key),
+            source="web",
+            user_id=0,
+            elapsed=elapsed,
+            image_bytes=output.data if output.kind == "image" else None,
+        )
         task["status"] = "done"
         task["stage"] = f"完成，用时 {elapsed}秒"
         logger.info("网页端生成完成: wf=%s, 用时 %ss", wf_key, elapsed)

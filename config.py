@@ -36,6 +36,11 @@ COMFY_TIMEOUT = 3600
 COMFY_PROGRESS_HEARTBEAT_INTERVAL = 10
 COMFY_DEFAULT_WORKFLOW = "z-image-turbo"
 
+# ---- 提示词日志（每次成功生成记录完整提示词 + 缩略图到 data/prompt_log/）----
+PROMPT_LOG_ENABLED = True
+PROMPT_LOG_THUMB_SIZE = 768       # 缩略图长边像素
+PROMPT_LOG_JPEG_QUALITY = 80
+
 # ---- 工作流注册表（主菜单驱动） ----
 _DEFAULT_WORKFLOW_REGISTRY = [
     {

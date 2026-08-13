@@ -676,6 +676,19 @@ async def upload_image(image_bytes: bytes, filename: str | None = None) -> str:
         return data.get("name", filename)
 
 
+async def free_memory() -> None:
+    """卸载 ComfyUI 已加载的模型并释放显存（供 Ollama 等共享 GPU 服务使用）。
+
+    失败抛异常，由调用方决定降级策略。
+    """
+    async with httpx.AsyncClient(base_url=COMFY_API_BASE, timeout=30) as client:
+        resp = await client.post(
+            "/free",
+            json={"unload_models": True, "free_memory": True},
+        )
+        resp.raise_for_status()
+
+
 # ── API 调用 ──────────────────────────────────────────────
 
 async def _submit_prompt(client: httpx.AsyncClient, workflow: dict) -> str:

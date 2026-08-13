@@ -23,6 +23,11 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 SD_API_BASE = os.getenv("SD_API_BASE", "http://10.126.126.1:7860")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 
+# ---- Ollama 本地大模型（图片反推提示词）----
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://10.126.126.4:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "huihui_ai/qwen3.6-abliterated:27b")
+OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "900"))
+
 # ---- ComfyUI API ----
 COMFY_API_BASE = os.getenv("COMFY_API_BASE", "http://10.126.126.4:8188")
 COMFY_POLL_INTERVAL = 2
@@ -863,6 +868,30 @@ SAMPLER_PRESETS = [
     "DPM2 a Karras", "DPM++ 2M Karras", "DPM++ SDE Karras",
     "DDIM", "PLMS", "UniPC",
 ]
+
+# ---- 图片反推提示词 System Prompt（Ollama 视觉模型）----
+REV_PROMPT_SYSTEM = """你是一名专业的 AI 图像反推提示词专家，熟悉 SD/SDXL 标签式提示词和 Krea 2 的文生图提示词写法。
+
+请根据用户上传的参考图片，严格反推出两种可用于文生图的英文提示词，目标是让生成图尽可能复现参考图。只允许描述图片中实际可见或可由画面直接推断的信息，不要自由创作，不要添加无关元素，不要遗漏会影响复现效果的关键细节。
+
+请重点检查并写清：
+1. 画面类型、整体风格、真实感、拍摄设备感与画幅比例；
+2. 主体数量、身份特征、可见部位与脸部可见程度；
+3. 构图：主体在画面中的位置、占比、留白、透视、倾斜角度、是否完整入镜、裁切风险；
+4. 人物姿态：身体方向、重心、四肢位置、手部动作、道具与脸部的遮挡关系；
+5. 发型、发色、发长、刘海、指甲等显著外观细节；
+6. 服装与配饰：款式、松紧度、长度、颜色、图案、材质、袜子和鞋子的细节；
+7. 关键道具及其位置、颜色、遮挡关系；
+8. 环境：房间类型、墙面、地面、家具、窗帘、镜子、开关等可见物件；
+9. 光线：光源方向、强度、阴影形状、对比度、曝光程度、色温；
+10. 相机感：是否像手机自拍、广角透视、焦距范围、镜面反射、非专业摄影质感；
+11. 所有容易被模型生成错误的地方，用明确否定句写出来。
+
+输出要求（严格遵守）：
+- 只输出一个合法的 JSON 对象，包含两个字符串字段，不要输出 JSON 以外的任何内容，不要解释分析过程：
+  - "sd_tags"：SD/SDXL 风格英文提示词，逗号分隔的标签形式，只写画面实际内容，不加任何画质词（如 masterpiece、best quality），不含负面提示词，不超过 120 个单词
+  - "krea2_prompt"：Krea 2 文生图提示词，连贯英文句子，按 Composition、Subject、Clothing、Environment、Lighting、Camera 等逻辑分段，重要构图和负面约束要明显强调，不含负面提示词，不超过 350 个单词
+"""
 
 # ---- 访问控制 ----
 def _parse_id_list(raw: str) -> list[int]:

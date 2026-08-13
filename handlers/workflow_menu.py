@@ -89,6 +89,9 @@ def _build_main_menu() -> tuple[str, InlineKeyboardMarkup]:
         InlineKeyboardButton("⛓ Pipeline", callback_data="pipe:menu"),
     ])
     keyboard.append([
+        InlineKeyboardButton("🔍 反推提示词", callback_data="rev_prompt"),
+    ])
+    keyboard.append([
         InlineKeyboardButton("⚙️ 参数设置", callback_data="comfy_settings"),
         InlineKeyboardButton("📖 帮助", callback_data="help_menu"),
     ])
@@ -292,7 +295,8 @@ async def help_commands(update, context):
         "/cancel — 取消当前等待输入\n"
         "/credit — 查看额度\n"
         "/start — 重新打开主菜单\n"
-        "/help — 打开本帮助"
+        "/help — 打开本帮助\n\n"
+        "🔍 反推提示词：主菜单按钮，上传图片反推出 SD 标签词 + Krea 2 句子版两种提示词"
     )
     keyboard = [[InlineKeyboardButton("🔙 返回", callback_data="help_menu")]]
     await reply_menu(query, text, InlineKeyboardMarkup(keyboard))

@@ -15,7 +15,8 @@ from config import HIRES_FIX_PARAMS, LOG_FULL_PROMPT, DEFAULT_PROMPT_PREFIX
 from config import COMFY_VIDEO_ASPECTS, COMFY_VIDEO_RESOLUTIONS, COMFY_VIDEO_FRAMES_PRESETS
 from config import DEFAULT_VIDEO_FRAMES_KEY
 from config import ADMIN_USER_ID, WORKFLOW_REGISTRY, COMFY_WORKFLOWS
-from services import sd_api, comfy_api, credits
+from config import COMFY_PROGRESS_HEARTBEAT_INTERVAL
+from services import sd_api, comfy_api, credits, ollama_api
 from services.network import is_network_error, retry_on_network_error
 from services.translator import translate
 from services.face_prompt import extract_face_prompt
@@ -157,11 +158,18 @@ class GenerationQueue:
                     await self._process_task(task)
                 except Exception as e:
                     error_text = str(e)
+                    backend = task.settings.get("backend")
                     if "ConnectError" in error_text or "connect" in error_text.lower():
-                        backend_label = "ComfyUI" if task.settings.get("backend") == "comfyui" else "SD"
-                        hint = f"{backend_label} 服务不可用，请检查后端是否运行。"
+                        if backend == "ollama":
+                            hint = "Ollama 服务不可用，请检查后端是否运行。"
+                        elif backend == "comfyui":
+                            hint = "ComfyUI 服务不可用，请检查后端是否运行。"
+                        else:
+                            hint = "SD 服务不可用，请检查后端是否运行。"
                     elif "timeout" in error_text.lower() or "Timeout" in error_text:
-                        if task.settings.get("backend") == "comfyui":
+                        if backend == "ollama":
+                            hint = "反推超时，请稍后重试。"
+                        elif backend == "comfyui":
                             hint = "ComfyUI 生成超时，请稍后重试。"
                         else:
                             hint = "生成超时，请尝试降低 Steps 或关闭高清修复。"
@@ -432,6 +440,11 @@ class GenerationQueue:
             self._app, task.chat_id, task.status_message_id
         )
 
+        # Ollama 图片反推：完全独立的处理路径（不进翻译/生成/媒体发送流程）
+        if backend == "ollama":
+            await self._process_reverse(task, updater)
+            return
+
         # 翻译 + 生成 + 结果信息构建（此阶段失败退款；发送阶段失败在 _send_result 内退款）
         try:
             translated = await self._translate_prompt(task, updater)
@@ -498,6 +511,104 @@ class GenerationQueue:
                 logger.debug("删除状态消息失败", exc_info=True)
 
         logger.info("用户 %s 生成完成 | 耗时 %.1fs", task.user_id, elapsed)
+
+    async def _process_reverse(self, task: GenerationTask,
+                               updater: ThrottledProgressUpdater) -> None:
+        """Ollama 图片反推提示词。
+
+        串行队列内执行，与 ComfyUI 生成天然互斥（防共享 GPU 显存 OOM）：
+        先卸载 ComfyUI 模型 → 调用 Ollama 视觉模型（27B 需数分钟）→ 发送
+        两种格式的 prompt 文本。任何失败统一退款并通过状态消息告知。
+        """
+        try:
+            # 先卸载 ComfyUI 模型释放显存；失败仅降级（Ollama 会 CPU offload 更多层）
+            await updater.set_stage("正在清理显存...")
+            try:
+                await comfy_api.free_memory()
+            except Exception:
+                logger.warning("ComfyUI free_memory 失败，降级继续", exc_info=True)
+
+            image_bytes = task.settings.get("_rev_image")
+            if not image_bytes:
+                raise ValueError("反推任务缺少图片数据")
+
+            await updater.set_stage("正在反推提示词（大模型推理中，可能需要几分钟）...")
+
+            # 心跳：长推理期间定期汇报已用时间，避免状态看似卡死
+            start = time.monotonic()
+            heartbeat_stop = asyncio.Event()
+
+            async def _heartbeat():
+                while not heartbeat_stop.is_set():
+                    await asyncio.sleep(COMFY_PROGRESS_HEARTBEAT_INTERVAL)
+                    elapsed = int(time.monotonic() - start)
+                    try:
+                        await updater.set_stage(
+                            f"正在反推提示词... 已用 {elapsed // 60}分{elapsed % 60:02d}秒"
+                        )
+                    except Exception:
+                        pass
+
+            heartbeat_task = asyncio.create_task(_heartbeat())
+            try:
+                sd_tags, krea2_prompt = await ollama_api.reverse_prompt(image_bytes)
+            finally:
+                heartbeat_stop.set()
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+            # 构建结果文本（SD 标签词 + Krea 2 句子版，各可点按复制）
+            info = (
+                "<b>🔍 反推提示词</b>\n\n"
+                "<b>SD 标签词（点按复制）：</b>\n"
+                f"<code>{_escape_and_truncate(sd_tags, 1500)}</code>\n\n"
+                "<b>Krea 2 句子版（点按复制）：</b>\n"
+                f"<code>{_escape_and_truncate(krea2_prompt, 2200)}</code>"
+            )
+            if task.credit_charged:
+                remaining = await credits.get_remaining(task.user_id)
+                info += f"\n<b>剩余额度:</b> {remaining}"
+
+            reply_to = task.reply_to_message_id or task.original_message_id
+            try:
+                await updater.set_stage("正在发送...")
+                await retry_on_network_error(
+                    lambda: self._app.bot.send_message(
+                        chat_id=task.chat_id,
+                        text=info,
+                        parse_mode="HTML",
+                        reply_to_message_id=reply_to,
+                    ),
+                    max_retries=2,
+                )
+            except Exception as e:
+                logger.error("反推结果发送失败: %s", e, exc_info=True)
+                if task.credit_charged:
+                    await credits.refund_one(task.user_id)
+                    task.credit_charged = False
+                await self._update_status(task, "结果发送失败，已退还额度。")
+                return
+        except Exception as e:
+            logger.error("反推提示词失败: %s", e, exc_info=True)
+            if task.credit_charged:
+                await credits.refund_one(task.user_id)
+                task.credit_charged = False
+            await self._update_status(task, f"反推失败: {str(e)[:200]}")
+            return
+
+        # 清理状态消息
+        if task.status_message_id is not None:
+            try:
+                await self._app.bot.delete_message(
+                    chat_id=task.chat_id,
+                    message_id=task.status_message_id,
+                )
+            except Exception:
+                logger.debug("删除状态消息失败", exc_info=True)
+        logger.info("用户 %s 反推完成", task.user_id)
 
     async def _pipe_notify(self, chat_id: int, text: str):
         """Pipeline 中止通知（独立消息，不复用即将删除的状态消息）。"""

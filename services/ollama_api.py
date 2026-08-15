@@ -99,12 +99,18 @@ async def _unload_model(client: httpx.AsyncClient) -> None:
         logger.warning("Ollama 模型卸载失败（下次生成前 ComfyUI 可能 OOM）", exc_info=True)
 
 
-async def reverse_prompt(image_bytes: bytes) -> tuple[str, str]:
-    """反推图片提示词。返回 (sd_tags, krea2_prompt)。失败抛 OllamaError。"""
+async def reverse_prompt(image_bytes: bytes, extra: str = "") -> tuple[str, str]:
+    """反推图片提示词。返回 (sd_tags, krea2_prompt)。失败抛 OllamaError。
+
+    extra: 用户额外要求（如「写实风格」「去掉眼镜」），非空时附加到请求中。
+    """
     image_b64 = _prepare_image(image_bytes)
+    user_text = "请反推这张图片。"
+    if extra and extra.strip():
+        user_text += f"\n\n额外要求：{extra.strip()}"
     messages = [
         {"role": "system", "content": REV_PROMPT_SYSTEM},
-        {"role": "user", "content": "请反推这张图片。", "images": [image_b64]},
+        {"role": "user", "content": user_text, "images": [image_b64]},
     ]
 
     timeout = httpx.Timeout(connect=10, read=OLLAMA_TIMEOUT, write=30, pool=10)

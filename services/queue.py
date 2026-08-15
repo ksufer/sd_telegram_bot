@@ -16,7 +16,7 @@ from config import COMFY_VIDEO_ASPECTS, COMFY_VIDEO_RESOLUTIONS, COMFY_VIDEO_FRA
 from config import DEFAULT_VIDEO_FRAMES_KEY
 from config import ADMIN_USER_ID, WORKFLOW_REGISTRY, COMFY_WORKFLOWS
 from config import COMFY_PROGRESS_HEARTBEAT_INTERVAL
-from services import sd_api, comfy_api, credits, ollama_api, prompt_log
+from services import sd_api, comfy_api, credits, ollama_api
 from services.network import is_network_error, retry_on_network_error
 from services.translator import translate
 from services.face_prompt import extract_face_prompt
@@ -275,8 +275,9 @@ class GenerationQueue:
         return comfy_output, actual_seed, wf_config, optimized_prompt
 
     def _cache_gen_context(self, task: GenerationTask, translated: str,
-                           actual_seed: int) -> str:
-        """缓存生成上下文，返回 context_id。"""
+                           actual_seed: int, model: str, wf_key: str,
+                           label: str, elapsed: float, is_video: bool) -> str:
+        """缓存生成上下文（供「💾 记录」按钮落盘提示词日志），返回 context_id。"""
         context_id = uuid.uuid4().hex[:8]
         if "_gen_context" not in self._app.bot_data:
             self._app.bot_data["_gen_context"] = {}
@@ -285,6 +286,13 @@ class GenerationQueue:
             "prompt": task.prompt,
             "translated": translated,
             "seed": actual_seed,
+            "model": model,
+            "wf_key": wf_key,
+            "label": label,
+            "elapsed": elapsed,
+            "is_video": is_video,
+            "user_id": task.user_id,
+            "logged": False,
         }
         while len(_gen) > 50:
             _gen.pop(next(iter(_gen)))
@@ -454,12 +462,25 @@ class GenerationQueue:
             # 优化提示词可用时，替代 translated 用于显示和缓存
             display_prompt = optimized_prompt or translated
 
-            # 缓存生成上下文
-            context_id = self._cache_gen_context(task, display_prompt, actual_seed)
-
             # 构建结果信息和菜单
             await updater.set_stage("正在发送...")
             elapsed = time.monotonic() - start_time
+
+            if backend == "sd":
+                model = settings.get("model") or ""
+                wf_key = "sd-webui"
+                label = "SD WebUI"
+                is_video = False
+            else:
+                model = settings.get("comfy_model") or ""
+                wf_key = settings.get("comfy_workflow", "")
+                label = wf_config.get("label", "") if wf_config else ""
+                is_video = wf_config.get("output_type") == "video" if wf_config else False
+
+            # 缓存生成上下文（供「💾 记录」按钮使用）
+            context_id = self._cache_gen_context(
+                task, display_prompt, actual_seed,
+                model, wf_key, label, elapsed, is_video)
 
             if backend == "sd":
                 info = _build_sd_info(settings, translated, actual_seed, elapsed)
@@ -491,23 +512,6 @@ class GenerationQueue:
         # 发送结果（失败时已退款并告知用户，保留状态消息作为告知渠道）
         sent = await self._send_result(task, raw_data, info, reply_markup,
                                        wf_config, updater)
-
-        # 提示词日志：完整提示词 + 缩略图按日落盘（data/prompt_log/），失败不影响主流程
-        if sent:
-            prompt_log.log_generation(
-                prompt=task.prompt,
-                final_prompt=display_prompt,
-                seed=actual_seed,
-                model=(settings.get("comfy_model") if backend == "comfyui"
-                       else settings.get("model") or ""),
-                wf_key=(settings.get("comfy_workflow", "") if backend == "comfyui"
-                        else "sd-webui"),
-                label=wf_config.get("label", "") if wf_config else "SD WebUI",
-                source="bot",
-                user_id=task.user_id,
-                elapsed=elapsed,
-                image_bytes=raw_data if isinstance(raw_data, bytes) else None,
-            )
 
         # Pipeline 自动连跑：回注输出图并组下一步任务入队
         if sent:
@@ -568,7 +572,8 @@ class GenerationQueue:
 
             heartbeat_task = asyncio.create_task(_heartbeat())
             try:
-                sd_tags, krea2_prompt = await ollama_api.reverse_prompt(image_bytes)
+                extra = (task.settings.get("_rev_extra") or "").strip()
+                sd_tags, krea2_prompt = await ollama_api.reverse_prompt(image_bytes, extra)
             finally:
                 heartbeat_stop.set()
                 heartbeat_task.cancel()
@@ -578,8 +583,9 @@ class GenerationQueue:
                     pass
 
             # 构建结果文本（SD 标签词 + Krea 2 句子版，各可点按复制）
+            title = "🔍 反推提示词（已应用额外要求）" if extra else "🔍 反推提示词"
             info = (
-                "<b>🔍 反推提示词</b>\n\n"
+                f"<b>{title}</b>\n\n"
                 "<b>SD 标签词（点按复制）：</b>\n"
                 f"<code>{_escape_and_truncate(sd_tags, 1500)}</code>\n\n"
                 "<b>Krea 2 句子版（点按复制）：</b>\n"

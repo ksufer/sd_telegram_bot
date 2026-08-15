@@ -428,7 +428,7 @@ async def pick_clip_skip(update, context):
     await reply_menu(query, text, markup)
 
 
-# ═══ 重用提示词/种子回调 ═══
+# ═══ 重用提示词回调 ═══
 
 async def reuse_prompt(update, context):
     query = update.callback_query
@@ -441,29 +441,6 @@ async def reuse_prompt(update, context):
         await query.message.reply_text(full_prompt)
     else:
         await safe_answer(query,"上下文已过期", show_alert=True)
-
-
-async def reuse_seed(update, context):
-    query = update.callback_query
-    context_id = query.data.replace("reuse_seed_", "")
-    ctx = context.bot_data.get("_gen_context", {}).get(context_id)
-    if ctx:
-        user_id = get_user_id(update)
-        settings = _ensure_settings(context, user_id)
-        settings["seed"] = ctx["seed"]
-        _save_settings(context, user_id)
-        await safe_answer(query,f"种子已设为 {ctx['seed']}")
-    else:
-        await safe_answer(query,"上下文已过期", show_alert=True)
-
-
-async def random_seed(update, context):
-    query = update.callback_query
-    user_id = get_user_id(update)
-    settings = _ensure_settings(context, user_id)
-    settings["seed"] = -1
-    _save_settings(context, user_id)
-    await safe_answer(query,"种子已设为随机")
 
 
 def _ensure_settings(context, user_id: int) -> dict:
@@ -500,6 +477,4 @@ def get_handlers() -> list:
         CallbackQueryHandler(auth_callback(start_seed_input), pattern="^set_seed$"),
         CallbackQueryHandler(auth_callback(close_menu), pattern="^close_menu$"),
         CallbackQueryHandler(auth_callback(reuse_prompt), pattern="^reuse_prompt_"),
-        CallbackQueryHandler(auth_callback(reuse_seed), pattern="^reuse_seed_"),
-        CallbackQueryHandler(auth_callback(random_seed), pattern="^random_seed$"),
     ]

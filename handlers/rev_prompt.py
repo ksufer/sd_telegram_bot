@@ -16,6 +16,7 @@ from handlers import auth_callback
 from handlers.common import get_user_id, reply_menu, safe_answer
 from handlers.generation import (
     _check_and_charge_credit,
+    _clean_caption,
     _clear_firstlast_state,
     _create_status_message,
     _download_tg_photo,
@@ -43,6 +44,7 @@ async def rev_prompt_menu(update, context):
     context.user_data.pop("_pipe_collect", None)
     context.user_data.pop("_pipe_edit_step", None)
     context.user_data.pop("_pipe_ready", None)
+    context.user_data.pop("_rev_extra", None)
     context.user_data["_waiting_input"] = "rev_prompt"
 
     text = (
@@ -50,6 +52,8 @@ async def rev_prompt_menu(update, context):
         "请发送一张图片，我会反推出两种提示词（各可点按复制）：\n"
         "• <b>SD 标签词</b>：逗号分隔的标签形式\n"
         "• <b>Krea 2 句子版</b>：连贯句子的详细描述\n\n"
+        "💡 可附带额外要求：发图时带上文字（如「写实风格」「去掉眼镜」），"
+        "或先发送要求文字再发图。\n"
         "消耗 1 额度，发送 /cancel 可取消。"
     )
     keyboard = InlineKeyboardMarkup([
@@ -83,10 +87,16 @@ async def handle_rev_photo(update, context):
 
     status_id = await _create_status_message(message, "正在反推提示词...")
 
+    # 额外要求：优先取本次发图的 caption，否则取之前单独发送的文字
+    extra = _clean_caption(message, context).strip()
+    if not extra and context.user_data is not None:
+        extra = (context.user_data.get("_rev_extra") or "").strip()
+
     # 反推任务走独立处理路径，settings 只需 backend + 图片数据
     task_settings = copy.deepcopy(context.user_data.get("settings", {})) if context.user_data else {}
     task_settings["backend"] = "ollama"
     task_settings["_rev_image"] = image_bytes.getvalue()
+    task_settings["_rev_extra"] = extra
 
     task = GenerationTask(
         user_id=user_id,
@@ -112,15 +122,25 @@ async def handle_rev_photo(update, context):
     # 入队成功后清除等待状态
     if context.user_data is not None:
         context.user_data["_waiting_input"] = None
+        context.user_data.pop("_rev_extra", None)
 
 
 # ═══ 文字处理（由 generation.handle_text 分发调用）═══
 
 async def handle_rev_text(update, context):
-    """等待反推期间收到文字 → 提示发图（避免误入生成流程）。"""
-    await update.message.reply_text(
-        "🔍 反推提示词等待图片：请发送一张图片，或 /cancel 取消。"
-    )
+    """等待反推期间收到文字 → 存为额外要求，继续等待图片。"""
+    text = update.message.text.strip()
+    if text:
+        if context.user_data is not None:
+            context.user_data["_rev_extra"] = text
+        await update.message.reply_text(
+            f"✅ 已记录额外要求：{text[:200]}{'...' if len(text) > 200 else ''}\n"
+            "请发送图片开始反推（发图时再附文字可覆盖本要求），或 /cancel 取消。"
+        )
+    else:
+        await update.message.reply_text(
+            "🔍 反推提示词等待图片：请发送一张图片（可附带文字要求），或 /cancel 取消。"
+        )
 
 
 # ═══ Handler 注册 ═══

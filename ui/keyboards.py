@@ -14,19 +14,29 @@ from config import (
 )
 
 
+def _gen_action_row(context_id: str, is_video: bool) -> list[InlineKeyboardButton]:
+    """生成后菜单动作按钮行：反推/抽卡（仅图片）+ 记录（图片视频均有）。"""
+    if not context_id:
+        return []
+    buttons = []
+    if not is_video:
+        buttons.append(InlineKeyboardButton("🔍 反推提示词", callback_data="rev_prompt"))
+        buttons.append(InlineKeyboardButton("🎰 灵感抽卡", callback_data="gacha:menu"))
+    buttons.append(InlineKeyboardButton("💾 记录", callback_data=f"log_gen_{context_id}"))
+    return buttons
+
+
 def generation_menu(context_id: str) -> InlineKeyboardMarkup:
     """SD WebUI 生成后菜单。"""
     return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("参数设置", callback_data="settings_menu"),
-            InlineKeyboardButton("关闭菜单", callback_data="close_menu"),
-        ],
+        _gen_action_row(context_id, is_video=False),
         [
             InlineKeyboardButton("用本图提示词",
                                  callback_data=f"reuse_prompt_{context_id}"),
-            InlineKeyboardButton("用本图种子",
-                                 callback_data=f"reuse_seed_{context_id}"),
-            InlineKeyboardButton("🎲", callback_data="random_seed"),
+            InlineKeyboardButton("参数设置", callback_data="settings_menu"),
+        ],
+        [
+            InlineKeyboardButton("关闭菜单", callback_data="close_menu"),
         ],
     ])
 
@@ -61,21 +71,18 @@ def build_toggle_row(settings: dict, wf_config: dict) -> list:
     return row
 
 
-def comfy_generation_menu(
-    context_id: str = "",
-    settings: dict | None = None,
-    include_seed_buttons: bool = True,
-) -> InlineKeyboardMarkup:
+def comfy_generation_menu(context_id: str = "",
+                          settings: dict | None = None) -> InlineKeyboardMarkup:
     """ComfyUI 生成后菜单。
 
     Args:
-        context_id: 种子按钮上下文 ID（include_seed_buttons=False 时可为空）。
-        settings: 用户设置（用于判断 zit-pussy/krea2/默认三种分支）。
-        include_seed_buttons: False 时不含种子复用/随机种子行（供刷新场景）。
+        context_id: 「💾 记录」按钮上下文 ID（空字符串则不显示动作按钮行）。
+        settings: 用户设置（用于判断 zit-pussy/krea2/默认三种分支与视频输出）。
     """
     if settings:
         wf_key = settings.get("comfy_workflow", "")
         wf_config = COMFY_WORKFLOWS.get(wf_key, {})
+        is_video = wf_config.get("output_type") == "video"
 
         if wf_config.get("lora_node"):
             # zit-pussy: LoRA 变体 + 三级开关
@@ -91,13 +98,9 @@ def comfy_generation_menu(
             toggle_row = build_toggle_row(settings, wf_config)
             if toggle_row:
                 rows.append(toggle_row)
-            if include_seed_buttons:
-                rows.append([
-                    InlineKeyboardButton("🔁 复用本次 Seed",
-                                         callback_data=f"comfy_reuse_seed_{context_id}"),
-                    InlineKeyboardButton("🎲 随机 Seed",
-                                         callback_data="comfy_random_seed"),
-                ])
+            action_row = _gen_action_row(context_id, is_video)
+            if action_row:
+                rows.append(action_row)
             rows.append([
                 InlineKeyboardButton("⚙️ ComfyUI 设置", callback_data="comfy_settings"),
                 InlineKeyboardButton("关闭菜单", callback_data="close_menu"),
@@ -129,13 +132,9 @@ def comfy_generation_menu(
                 "🧬" if lora_on else "🧬✖", callback_data="comfy_krea2_lora_toggle_gen"))
             if toggle_row:
                 rows.append(toggle_row)
-            if include_seed_buttons:
-                rows.append([
-                    InlineKeyboardButton("🔁 复用本次 Seed",
-                                         callback_data=f"comfy_reuse_seed_{context_id}"),
-                    InlineKeyboardButton("🎲 随机 Seed",
-                                         callback_data="comfy_random_seed"),
-                ])
+            action_row = _gen_action_row(context_id, is_video)
+            if action_row:
+                rows.append(action_row)
             rows.append([
                 InlineKeyboardButton("⚙️ ComfyUI 设置", callback_data="comfy_settings"),
                 InlineKeyboardButton("关闭菜单", callback_data="close_menu"),
@@ -143,14 +142,12 @@ def comfy_generation_menu(
             return InlineKeyboardMarkup(rows)
 
     # 默认菜单（无 lora_node 的 workflow / settings is None）
+    is_video = bool(settings and COMFY_WORKFLOWS.get(
+        settings.get("comfy_workflow", ""), {}).get("output_type") == "video")
     rows = []
-    if include_seed_buttons:
-        rows.append([
-            InlineKeyboardButton("🔁 复用本次 Seed",
-                                 callback_data=f"comfy_reuse_seed_{context_id}"),
-            InlineKeyboardButton("🎲 随机 Seed",
-                                 callback_data="comfy_random_seed"),
-        ])
+    action_row = _gen_action_row(context_id, is_video)
+    if action_row:
+        rows.append(action_row)
     if settings:
         wf_key = settings.get("comfy_workflow", "")
         wf_config = COMFY_WORKFLOWS.get(wf_key, {})

@@ -11,9 +11,9 @@ from telegram.ext import MessageHandler, CommandHandler, CallbackQueryHandler, f
 from config import ADMIN_USER_ID, DEFAULT_USER_SETTINGS, COMFY_WORKFLOWS, COMFY_DEFAULT_WORKFLOW
 from services.network import retry_on_network_error
 from services.queue import GenerationTask
-from services import credits, comfy_api
+from services import credits, comfy_api, prompt_log
 from handlers.settings import _ensure_settings, _save_settings, _settings_menu
-from handlers import is_authorized, _user_auth_filter
+from handlers import is_authorized, _user_auth_filter, auth_callback
 from handlers.common import refresh_workflows, safe_answer
 from handlers.comfy_settings import _comfy_settings_menu as _comfy_settings_menu_shim
 
@@ -557,6 +557,7 @@ async def handle_cancel(update, context):
             context.user_data.pop("_pipe_collect", None)
             context.user_data.pop("_pipe_edit_step", None)
             context.user_data.pop("_pipe_ready", None)
+            context.user_data.pop("_rev_extra", None)
         user_id = update.effective_user.id
         settings = _ensure_settings(context, user_id)
         await update.message.reply_text("已取消。")
@@ -567,6 +568,71 @@ async def handle_cancel(update, context):
         await update.message.reply_text(txt, reply_markup=markup, parse_mode="HTML")
     else:
         await update.message.reply_text("当前没有需要取消的操作。")
+
+
+async def log_gen(update, context):
+    """「💾 记录」按钮：把本次生成记录到提示词日志（仅按需，不自动落盘）。"""
+    query = update.callback_query
+    context_id = query.data.replace("log_gen_", "")
+    gen_ctx = context.bot_data.get("_gen_context", {}).get(context_id)
+    if gen_ctx is None:
+        await safe_answer(query, "记录信息已过期，无法记录。", show_alert=True)
+        return
+    if gen_ctx.get("logged"):
+        await safe_answer(query, "本次生成已记录过。", show_alert=True)
+        return
+
+    msg = query.message
+    image_bytes = None
+    # 防御：msg 可能为 None 或 MaybeInaccessibleMessage（消息过旧，无 .photo/.document 属性），
+    # 按无缩略图处理（image_bytes=None 直接落盘 txt+json）
+    photo = getattr(msg, "photo", None)
+    document = getattr(msg, "document", None)
+    if not gen_ctx.get("is_video"):
+        if photo:
+            try:
+                image_bytes = (await _download_tg_photo(photo[-1])).getvalue()
+            except Exception:
+                logger.warning("记录缩略图下载失败（照片）", exc_info=True)
+        elif document:
+            try:
+                doc_file = await document.get_file()
+                buf = io.BytesIO()
+                await doc_file.download_to_memory(buf)
+                image_bytes = buf.getvalue()
+            except Exception:
+                logger.warning("记录缩略图下载失败（文件）", exc_info=True)
+
+    prompt_log.log_generation(
+        prompt=gen_ctx["prompt"],
+        final_prompt=gen_ctx["translated"],
+        seed=gen_ctx["seed"],
+        model=gen_ctx["model"],
+        wf_key=gen_ctx["wf_key"],
+        label=gen_ctx["label"],
+        source="bot",
+        user_id=gen_ctx["user_id"],
+        elapsed=gen_ctx["elapsed"],
+        image_bytes=image_bytes,
+    )
+    gen_ctx["logged"] = True
+    await safe_answer(query, "✅ 已记录到提示词日志。", show_alert=True)
+
+    # 按钮文案标记为已记录（telegram 对象不可变，必须重建键盘，不能直接改 btn.text）
+    try:
+        markup = msg.reply_markup
+        if markup:
+            new_rows = [
+                [
+                    InlineKeyboardButton("✅ 已记录", callback_data=btn.callback_data)
+                    if btn.callback_data == f"log_gen_{context_id}" else btn
+                    for btn in row
+                ]
+                for row in markup.inline_keyboard
+            ]
+            await msg.edit_reply_markup(InlineKeyboardMarkup(new_rows))
+    except Exception:
+        pass
 
 
 async def handle_mode(update, context):
@@ -1039,6 +1105,7 @@ async def handle_document(update, context):
 def get_handlers() -> list:
     return [
         CommandHandler("cancel", handle_cancel, filters=_user_auth_filter()),
+        CallbackQueryHandler(auth_callback(log_gen), pattern=r"^log_gen_"),
         CommandHandler("mode", handle_mode, filters=_user_auth_filter()),
         CallbackQueryHandler(handle_mode_callback, pattern=r"^mode:"),
         MessageHandler(

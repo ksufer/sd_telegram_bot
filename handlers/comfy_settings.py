@@ -491,35 +491,6 @@ async def toggle_comfy_translate(update, context):
     await reply_menu(query, text, markup)
 
 
-async def reuse_comfy_seed(update, context):
-    """从 context_id 缓存读取 actual_seed，写入 comfy_seed。"""
-    query = update.callback_query
-    context_id = query.data.replace("comfy_reuse_seed_", "")
-    gen_ctx = context.bot_data.get("_gen_context", {}).get(context_id)
-    if gen_ctx is None:
-        await safe_answer(query, "未找到本次 Seed，请重新生成。", show_alert=True)
-        return
-
-    user_id = get_user_id(update)
-    settings = _ensure_settings(context, user_id)
-    settings["comfy_seed"] = gen_ctx["seed"]
-    _save_settings(context, user_id)
-
-    await safe_answer(query, f"Seed 已固定为 {gen_ctx['seed']}，下次生成将复用。",
-                      show_alert=True)
-
-
-async def random_comfy_seed(update, context):
-    """恢复随机种子。"""
-    query = update.callback_query
-    user_id = get_user_id(update)
-    settings = _ensure_settings(context, user_id)
-    settings["comfy_seed"] = -1
-    _save_settings(context, user_id)
-
-    await safe_answer(query, "已恢复随机种子")
-
-
 async def clear_comfy_prompt(update, context):
     """清除自定义 Prompt，恢复使用实时输入。"""
     query = update.callback_query
@@ -761,26 +732,22 @@ async def pick_comfy_lora_variant_fast(update, context):
 
 
 
-def _extract_seed_context_id(query) -> str | None:
-    """从当前消息键盘解析 comfy_reuse_seed_ 按钮携带的 context_id。"""
+def _extract_log_context_id(query) -> str | None:
+    """从当前消息键盘解析 log_gen_ 按钮携带的 context_id。"""
     markup = query.message.reply_markup
     if markup:
         for row in markup.inline_keyboard:
             for btn in row:
                 data = btn.callback_data or ""
-                if data.startswith("comfy_reuse_seed_"):
-                    return data.replace("comfy_reuse_seed_", "")
+                if data.startswith("log_gen_"):
+                    return data.replace("log_gen_", "")
     return None
 
 
 async def _update_gen_keyboard(query, settings):
     """刷新生成后菜单键盘（各 fast handler 公用）。"""
-    context_id = _extract_seed_context_id(query)
-    if context_id is None:
-        markup = comfy_generation_menu(context_id="", settings=settings,
-                                       include_seed_buttons=False)
-    else:
-        markup = comfy_generation_menu(context_id, settings=settings)
+    context_id = _extract_log_context_id(query)
+    markup = comfy_generation_menu(context_id or "", settings=settings)
     try:
         await query.message.edit_reply_markup(markup)
     except Exception:
@@ -862,8 +829,6 @@ def get_handlers() -> list:
         CallbackQueryHandler(auth_callback(start_comfy_seed_input), pattern=r"^comfy_seed$"),
         CallbackQueryHandler(auth_callback(start_comfy_prompt_input), pattern=r"^comfy_prompt$"),
         CallbackQueryHandler(auth_callback(toggle_comfy_translate), pattern=r"^comfy_translate$"),
-        CallbackQueryHandler(auth_callback(reuse_comfy_seed), pattern=r"^comfy_reuse_seed_"),
-        CallbackQueryHandler(auth_callback(random_comfy_seed), pattern=r"^comfy_random_seed$"),
         CallbackQueryHandler(auth_callback(clear_comfy_prompt), pattern=r"^clear_comfy_prompt$"),
         # 视频比例/画质/长度
         CallbackQueryHandler(auth_callback(show_comfy_video_aspect_menu),

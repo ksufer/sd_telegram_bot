@@ -56,7 +56,7 @@ codegraph affected [文件]    # 改动文件影响了哪些测试
 | `handlers/pipeline.py` | Pipeline 动态编排（主菜单「⛓ Pipeline」；步骤列表持久化在 `settings["pipeline_steps"]`，编排/增删/排序/运行） |
 | `handlers/rev_prompt.py` | 图片反推提示词交互（主菜单「🔍 反推提示词」；等待标记 `_waiting_input="rev_prompt"`，由 `handle_photo`/`handle_text` 顶部分发；扣 1 额度入队） |
 | `services/ollama_api.py` | Ollama 视觉模型反推（单次 `/api/chat` 同时产出 SD 标签词 + Krea 2 句子版 JSON；解析失败修复重试一次；请求 keep_alive 5m、结束显式卸载归还显存） |
-| `services/prompt_log.py` | 提示词日志（`data/prompt_log/<日期>/` 下每记录三件套：缩略图 jpg + 完整提示词 txt + 元数据 json；Bot/Web 生成成功均记录，失败仅记日志；收藏/删除供 Admin API 用） |
+| `services/prompt_log.py` | 提示词日志（`data/prompt_log/<日期>/` 下每记录三件套：缩略图 jpg + 完整提示词 txt + 元数据 json；Admin Web 生成成功自动记录，Bot 端改为结果菜单「💾 记录」按钮按需落盘，失败仅记日志；收藏/删除供 Admin API 用） |
 
 ### 生成流程
 
@@ -74,7 +74,7 @@ codegraph affected [文件]    # 改动文件影响了哪些测试
 - **重复执行**：运行时输入的 prompt 自动固化为步骤预设；图片文件名缓存在 `user_data["_pipe_last_images"]`（会话级）。再次运行时输入齐备 → 弹「运行确认」页（`pipe:go` 直接开始 / `pipe:reimg` 清缓存重选图片），缺啥问啥。
 - 步骤合法性：仅图片输出的 ComfyUI 工作流；首步为文生图或单图图生图；后续步为单图或双角色图生图；视频工作流不可作为步骤。
 - 每步使用自己工作流的 `default_model` 解析链（覆盖/弹出 `comfy_model`），不用用户全局模型。
-- seed 每步独立（各自的 `_gen_context` / reuse 按钮照常）。
+- seed 每步独立（各自的 `_gen_context` 缓存）。
 - 会话标记：`_waiting_input` 取值 `"pipe_collect"`（收集提示词）/ `"pipe_step_prompt"`（编辑预设）；`_pipe_collect` / `_pipe_edit_step`；由 `handle_text`/`handle_photo` 顶部分发（延迟 import 避免循环），`/cancel` 统一清理。
 - **admin/tasks.py 不镜像** pipeline 连跑（网页端不创建带 `pipeline` 字段的任务，走原单步路径）。
 

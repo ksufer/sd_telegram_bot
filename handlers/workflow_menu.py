@@ -296,7 +296,7 @@ async def help_commands(update, context):
         "/credit — 查看额度\n"
         "/start — 重新打开主菜单\n"
         "/help — 打开本帮助\n\n"
-        "🔍 反推提示词：主菜单按钮，上传图片反推出 SD 标签词 + Krea 2 句子版两种提示词"
+        "🔍 反推提示词：主菜单或生成结果菜单按钮，上传图片反推出 SD 标签词 + Krea 2 句子版两种提示词（发图时可附文字额外要求）"
     )
     keyboard = [[InlineKeyboardButton("🔙 返回", callback_data="help_menu")]]
     await reply_menu(query, text, InlineKeyboardMarkup(keyboard))
@@ -310,7 +310,7 @@ async def help_tips(update, context):
         "<b>💡 使用技巧</b>\n\n"
         "• 在 ComfyUI 设置中固定种子，可以复现之前的生成结果\n"
         "• 为工作流设置自定义 Prompt，固定输出风格\n"
-        "• 回复生成结果可以复用该次的种子\n"
+        "• 生成结果菜单提供「💾 记录」「🔍 反推」「🎰 抽卡」快捷按钮\n"
         "• 图片编辑模式支持多轮修改，每次回复继续改"
     )
     keyboard = [[InlineKeyboardButton("🔙 返回", callback_data="help_menu")]]

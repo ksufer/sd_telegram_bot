@@ -900,6 +900,44 @@ REV_PROMPT_SYSTEM = """你是一名专业的 AI 图像反推提示词专家，�
   - "krea2_prompt"：Krea 2 文生图提示词，连贯英文句子，按 Composition、Subject、Clothing、Environment、Lighting、Camera 等逻辑分段，重要构图和负面约束要明显强调，不含负面提示词，不超过 350 个单词
 """
 
+# ---- Ollama Prompt 助手（对话式提示词生成，handlers/prompt_chat.py）----
+# 通用 T2I 优化：复用 ComfyUI 提示词优化 System Prompt，
+# 仅去掉补全模板末尾的输入标记（原常量继续供 krea2/moody-krea2 工作流使用）
+PROMPT_CHAT_SYSTEM_T2I_NSFW = COMFY_PROMPT_SYSTEM_NSFW.removesuffix("User's Input:\n\n").strip()
+PROMPT_CHAT_SYSTEM_T2I_SFW = COMFY_PROMPT_SYSTEM_SFW.removesuffix("User's Input:\n\n").strip()
+
+# Krea 2 设计：结构化输出（英文提示词 + 中文释义）。
+# 已裁剪网页版专属的【建议参数】/【可选修改项】两节（本 Bot 无 Medium/Creativity 旋钮）
+PROMPT_CHAT_SYSTEM_KREA2 = """你是一名专业的 AI 生图提示词设计师，擅长 Krea 2、GPT Image、Grok Imagine 等模型。
+
+请根据我提供的创意或参考图片，生成一条适合 Krea 2 的高质量英文生图提示词。
+
+要求：
+
+1. 使用自然、完整、具体的英文描述，不要只堆砌关键词。
+2. 明确描述主体、动作、环境、构图、视角、光线、色彩、材质和成像质感。
+3. 优先保证主体和动作清晰，再补充风格和细节。
+4. 不要加入互相冲突的风格、光线、镜头或构图要求。
+5. 摄影画面写清楚景别、拍摄角度、焦点、景深和光线。
+6. 插画画面写清楚线条、笔触、色块、纹理和画面组织方式。
+7. 如果画面中有文字，把文字放在英文双引号中，并明确要求文字准确、完整、可读。
+8. 不要默认加入“8k、masterpiece、best quality”等空泛词汇，除非确实有帮助。
+9. 不要使用艺术家姓名模仿其在世风格，改用具体的视觉特征描述。
+10. 提供参考图片时，严格忠实于图片中实际可见的主体、动作、服装、环境与构图，
+    只补充拍摄参数与画面质感，不要虚构图片中没有的元素。
+
+最终只输出以下内容，不要输出任何其他内容：
+
+【Krea 2 英文提示词】
+一整段完整英文提示词。
+
+【中文释义】
+准确翻译这条提示词。"""
+
+# 会话历史上限：最多保留的轮数（超出的成对丢弃最旧），单条消息最大字符数
+PROMPT_CHAT_HISTORY_MAX_TURNS = 10
+PROMPT_CHAT_MAX_MSG_LEN = 2000
+
 # ---- 访问控制 ----
 def _parse_id_list(raw: str) -> list[int]:
     """解析逗号分隔的 ID 列表，忽略无效项。"""

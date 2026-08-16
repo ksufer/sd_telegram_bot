@@ -218,6 +218,10 @@ async def handle_text(update, context):
             from handlers.rev_prompt import handle_rev_text
             await handle_rev_text(update, context)
             return
+        elif waiting == "prompt_chat":
+            from handlers.prompt_chat import handle_prompt_chat_text
+            await handle_prompt_chat_text(update, context)
+            return
         elif waiting == "sd_seed" or context.user_data.get("_waiting_seed"):
             await _handle_seed_input(update, context)
             return
@@ -764,6 +768,13 @@ async def handle_photo(update, context):
             and context.user_data.get("_waiting_input") == "rev_prompt"):
         from handlers.rev_prompt import handle_rev_photo
         await handle_rev_photo(update, context)
+        return
+
+    # Prompt 助手对话等待图片（同样优先于 pipeline 收集与工作流门禁）
+    if (context.user_data is not None
+            and context.user_data.get("_waiting_input") == "prompt_chat"):
+        from handlers.prompt_chat import handle_prompt_chat_photo
+        await handle_prompt_chat_photo(update, context)
         return
 
     # Pipeline 收集流程等待图片（首步起始图/双图步参考图），延迟 import 避免循环

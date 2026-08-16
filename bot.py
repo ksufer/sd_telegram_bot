@@ -16,6 +16,7 @@ from handlers import comfy_settings as comfy_settings_handler
 from handlers import workflow_menu as workflow_menu_handler
 from handlers import gacha as gacha_handler
 from handlers import rev_prompt as rev_prompt_handler
+from handlers import prompt_chat as prompt_chat_handler
 from handlers import pipeline as pipeline_handler
 
 
@@ -69,6 +70,7 @@ def main():
     app.add_handlers(workflow_menu_handler.get_handlers())
     app.add_handlers(gacha_handler.get_handlers())
     app.add_handlers(rev_prompt_handler.get_handlers())
+    app.add_handlers(prompt_chat_handler.get_handlers())
     app.add_handlers(pipeline_handler.get_handlers())
     app.add_handlers(settings_handler.get_handlers())
     app.add_handlers(generation_handler.get_handlers())

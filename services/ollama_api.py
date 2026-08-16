@@ -1,8 +1,9 @@
-"""Ollama 本地大模型调用 — 图片提示词反推。
+"""Ollama 本地大模型调用 — 图片提示词反推 / Prompt 助手对话。
 
-入口：handlers/rev_prompt.py，经 GenerationQueue 串行执行（与 ComfyUI 互斥，
-防止共享 GPU 显存冲突 OOM）。单次 /api/chat 调用同时产出 SD 标签词 + Krea 2
-句子版两种格式，JSON 解析失败时追加修复指令重试一次。
+入口：handlers/rev_prompt.py（反推）与 handlers/prompt_chat.py（对话），
+均经 GenerationQueue 串行执行（与 ComfyUI 互斥，防止共享 GPU 显存冲突 OOM）。
+反推：单次 /api/chat 调用同时产出 SD 标签词 + Krea 2 句子版两种格式，
+JSON 解析失败时追加修复指令重试一次。对话：prompt_chat() 纯文本自由输出。
 """
 
 import base64
@@ -61,19 +62,25 @@ def _parse_result(content: str) -> tuple[str, str]:
     return sd_tags.strip(), krea2.strip()
 
 
-async def _chat(client: httpx.AsyncClient, messages: list) -> str:
-    """调用 /api/chat（非流式），返回 message.content。失败抛 OllamaError。"""
+async def _chat(client: httpx.AsyncClient, messages: list,
+                json_format: bool = True, temperature: float = 0.2) -> str:
+    """调用 /api/chat（非流式），返回 message.content。失败抛 OllamaError。
+
+    json_format: 要求模型输出 JSON（反推用）；False 为自由文本（对话用）。
+    """
+    payload = {
+        "model": OLLAMA_MODEL,
+        "messages": messages,
+        "stream": False,
+        "think": False,
+        # 保持模型常驻以便失败重试时免于重新加载 17GB；调用结束后显式卸载
+        "keep_alive": "5m",
+        "options": {"temperature": temperature},
+    }
+    if json_format:
+        payload["format"] = "json"
     try:
-        resp = await client.post("/api/chat", json={
-            "model": OLLAMA_MODEL,
-            "messages": messages,
-            "stream": False,
-            "format": "json",
-            "think": False,
-            # 保持模型常驻以便失败重试时免于重新加载 17GB；调用结束后显式卸载
-            "keep_alive": "5m",
-            "options": {"temperature": 0.2},
-        })
+        resp = await client.post("/api/chat", json=payload)
         resp.raise_for_status()
         data = resp.json()
     except httpx.HTTPStatusError as e:
@@ -132,5 +139,29 @@ async def reverse_prompt(image_bytes: bytes, extra: str = "") -> tuple[str, str]
                 })
                 content = await _chat(client, messages)
                 return _parse_result(content)
+        finally:
+            await _unload_model(client)
+
+
+async def prompt_chat(system: str, history: list, image_bytes: bytes | None = None,
+                      temperature: float = 0.7) -> str:
+    """对话式提示词生成（Prompt 助手）。返回模型纯文本回复。失败抛 OllamaError。
+
+    system: 系统提示词；history: 会话历史消息列表（[{role, content}...]，
+    最后一条应为当前轮的 user 消息）；image_bytes: 当前轮参考图片，
+    仅附加到本轮（不入历史，由调用方保证）。
+    """
+    messages = [{"role": "system", "content": system}]
+    for msg in history:
+        messages.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
+    if image_bytes:
+        if not messages or messages[-1]["role"] != "user":
+            messages.append({"role": "user", "content": ""})
+        messages[-1]["images"] = [_prepare_image(image_bytes)]
+
+    timeout = httpx.Timeout(connect=10, read=OLLAMA_TIMEOUT, write=30, pool=10)
+    async with httpx.AsyncClient(base_url=OLLAMA_BASE_URL, timeout=timeout) as client:
+        try:
+            return await _chat(client, messages, json_format=False, temperature=temperature)
         finally:
             await _unload_model(client)

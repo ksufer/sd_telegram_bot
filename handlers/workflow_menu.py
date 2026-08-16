@@ -90,6 +90,7 @@ def _build_main_menu() -> tuple[str, InlineKeyboardMarkup]:
     ])
     keyboard.append([
         InlineKeyboardButton("🔍 反推提示词", callback_data="rev_prompt"),
+        InlineKeyboardButton("💬 Prompt 助手", callback_data="prompt_chat:menu"),
     ])
     keyboard.append([
         InlineKeyboardButton("⚙️ 参数设置", callback_data="comfy_settings"),

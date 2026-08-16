@@ -4,18 +4,27 @@ import html
 import io
 import logging
 import random
+import re
 import time
 import uuid
 from dataclasses import dataclass
 
 import telegram.error
 from PIL import Image
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from config import HIRES_FIX_PARAMS, LOG_FULL_PROMPT, DEFAULT_PROMPT_PREFIX
 from config import COMFY_VIDEO_ASPECTS, COMFY_VIDEO_RESOLUTIONS, COMFY_VIDEO_FRAMES_PRESETS
 from config import DEFAULT_VIDEO_FRAMES_KEY
 from config import ADMIN_USER_ID, WORKFLOW_REGISTRY, COMFY_WORKFLOWS
 from config import COMFY_PROGRESS_HEARTBEAT_INTERVAL
+from config import (
+    PROMPT_CHAT_SYSTEM_T2I_NSFW,
+    PROMPT_CHAT_SYSTEM_T2I_SFW,
+    PROMPT_CHAT_SYSTEM_KREA2,
+    PROMPT_CHAT_HISTORY_MAX_TURNS,
+    PROMPT_CHAT_MAX_MSG_LEN,
+)
 from services import sd_api, comfy_api, credits, ollama_api
 from services.network import is_network_error, retry_on_network_error
 from services.translator import translate
@@ -162,6 +171,8 @@ class GenerationQueue:
                     if "ConnectError" in error_text or "connect" in error_text.lower():
                         if backend == "ollama":
                             hint = "Ollama 服务不可用，请检查后端是否运行。"
+                        elif backend == "ollama_chat":
+                            hint = "Ollama 服务不可用，Prompt 助手暂时无法使用。"
                         elif backend == "comfyui":
                             hint = "ComfyUI 服务不可用，请检查后端是否运行。"
                         else:
@@ -169,6 +180,8 @@ class GenerationQueue:
                     elif "timeout" in error_text.lower() or "Timeout" in error_text:
                         if backend == "ollama":
                             hint = "反推超时，请稍后重试。"
+                        elif backend == "ollama_chat":
+                            hint = "Prompt 助手响应超时，请稍后重试。"
                         elif backend == "comfyui":
                             hint = "ComfyUI 生成超时，请稍后重试。"
                         else:
@@ -453,6 +466,11 @@ class GenerationQueue:
             await self._process_reverse(task, updater)
             return
 
+        # Ollama Prompt 助手对话：独立处理路径（与反推共用显存互斥策略）
+        if backend == "ollama_chat":
+            await self._process_prompt_chat(task, updater)
+            return
+
         # 翻译 + 生成 + 结果信息构建（此阶段失败退款；发送阶段失败在 _send_result 内退款）
         try:
             translated = await self._translate_prompt(task, updater)
@@ -632,6 +650,166 @@ class GenerationQueue:
             except Exception:
                 logger.debug("删除状态消息失败", exc_info=True)
         logger.info("用户 %s 反推完成", task.user_id)
+
+    async def _process_prompt_chat(self, task: GenerationTask,
+                                   updater: ThrottledProgressUpdater) -> None:
+        """Ollama Prompt 助手对话轮（backend="ollama_chat"）。
+
+        与反推共用显存互斥策略：先卸载 ComfyUI 模型 → 调用 Ollama → 发送结果。
+        会话历史存 bot_data["_prompt_chat"][user_id]：本轮 user 消息由 handler
+        入队前追加，本方法成功后末尾追加 assistant 回复并裁剪轮数；失败时退款
+        并回滚该轮 pending 的 user 消息（仅当它仍是历史最后一条时，避免误删
+        已入队的后续轮次消息）。
+        """
+        sessions = self._app.bot_data.get("_prompt_chat") or {}
+        session = sessions.get(task.user_id)
+        if session is None:
+            logger.error("用户 %s Prompt 助手会话已丢失", task.user_id)
+            if task.credit_charged:
+                await credits.refund_one(task.user_id)
+                task.credit_charged = False
+            await self._update_status(task, "Prompt 助手会话已失效，请重新进入后重试。")
+            return
+
+        mode = session.get("mode", "t2i")
+        nsfw = session.get("nsfw", True)
+        history = session.get("history") or []
+        if mode == "krea2":
+            system = PROMPT_CHAT_SYSTEM_KREA2
+        else:
+            system = (PROMPT_CHAT_SYSTEM_T2I_NSFW if nsfw
+                      else PROMPT_CHAT_SYSTEM_T2I_SFW)
+
+        try:
+            # 先卸载 ComfyUI 模型释放显存；失败仅降级（Ollama 会 CPU offload 更多层）
+            await updater.set_stage("正在清理显存...")
+            try:
+                await comfy_api.free_memory()
+            except Exception:
+                logger.warning("ComfyUI free_memory 失败，降级继续", exc_info=True)
+
+            await updater.set_stage(
+                "正在与 Prompt 助手对话（大模型推理中，可能需要几分钟，"
+                "每次对话需重新加载模型，请耐心等待）..."
+            )
+
+            # 心跳：长推理期间定期汇报已用时间，避免状态看似卡死
+            start = time.monotonic()
+            heartbeat_stop = asyncio.Event()
+
+            async def _heartbeat():
+                while not heartbeat_stop.is_set():
+                    await asyncio.sleep(COMFY_PROGRESS_HEARTBEAT_INTERVAL)
+                    elapsed = int(time.monotonic() - start)
+                    try:
+                        await updater.set_stage(
+                            f"正在与 Prompt 助手对话... 已用 {elapsed // 60}分{elapsed % 60:02d}秒"
+                        )
+                    except Exception:
+                        pass
+
+            heartbeat_task = asyncio.create_task(_heartbeat())
+            try:
+                # 历史快照（开始处理时的副本），避免中途追加的下一轮影响本次消息列表
+                msgs = [{"role": m.get("role"), "content": m.get("content")} for m in history]
+                image_bytes = task.settings.get("_chat_image")
+                reply = await ollama_api.prompt_chat(system, msgs, image_bytes)
+            finally:
+                heartbeat_stop.set()
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+        except Exception as e:
+            logger.error("Prompt 助手对话失败: %s", e, exc_info=True)
+            if task.credit_charged:
+                await credits.refund_one(task.user_id)
+                task.credit_charged = False
+            self._rollback_pending_user(session, task)
+            await self._update_status(task, f"Prompt 助手调用失败: {str(e)[:200]}")
+            return
+
+        # 构建结果文本（T2I：全文 code 块；Krea 2：英文提示词段 code 块 + 其余转义）
+        title = "🛠 通用 T2I" if mode == "t2i" else "🎨 Krea 2"
+        if mode == "t2i":
+            title += " · 🔞 NSFW" if nsfw else " · 🟢 SFW"
+        info = f"<b>💬 Prompt 助手</b>（{title}）\n\n"
+        krea2_parts = _extract_krea2_en(reply) if mode == "krea2" else None
+        if krea2_parts is not None:
+            en_part, rest = krea2_parts
+            budget = 4096 - len(info) - 120
+            en_esc = _escape_and_truncate(en_part, min(len(en_part) + 40, budget // 2))
+            rest_esc = _escape_and_truncate(rest, budget - len(en_esc))
+            info += ("【Krea 2 英文提示词】\n"
+                     f"<code>{en_esc}</code>\n\n{rest_esc}")
+        else:
+            info += f"<code>{_escape_and_truncate(reply, 3500)}</code>"
+        if task.credit_charged:
+            remaining = await credits.get_remaining(task.user_id)
+            info += f"\n<b>剩余额度:</b> {remaining}"
+
+        reply_markup = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("🗑 清空会话", callback_data="prompt_chat:clear"),
+                InlineKeyboardButton("❌ 退出对话", callback_data="prompt_chat:exit"),
+            ],
+        ])
+
+        reply_to = task.reply_to_message_id or task.original_message_id
+        try:
+            await updater.set_stage("正在发送...")
+            await retry_on_network_error(
+                lambda: self._app.bot.send_message(
+                    chat_id=task.chat_id,
+                    text=info,
+                    parse_mode="HTML",
+                    reply_to_message_id=reply_to,
+                    reply_markup=reply_markup,
+                ),
+                max_retries=2,
+            )
+        except Exception as e:
+            logger.error("Prompt 助手结果发送失败: %s", e, exc_info=True)
+            if task.credit_charged:
+                await credits.refund_one(task.user_id)
+                task.credit_charged = False
+            self._rollback_pending_user(session, task)
+            await self._update_status(task, "结果发送失败，已退还额度。")
+            return
+
+        # 成功后追加 assistant 回复并裁剪历史（保留最近 N 轮）。
+        # 守卫：若推理期间会话被清空/重建（pending 消息已不在原位），
+        # 仅发送结果、不追加回复，避免把旧轮回复挂到新历史上。
+        history = session.setdefault("history", [])
+        pending_index = task.settings.get("_chat_pending_index")
+        if (pending_index is not None and 0 <= pending_index < len(history)
+                and history[pending_index].get("role") == "user"):
+            history.append({"role": "assistant", "content": _truncate_chat_msg(reply)})
+            _trim_chat_history(session)
+        else:
+            logger.warning("用户 %s Prompt 助手会话已变更，跳过回复追加", task.user_id)
+
+        # 清理状态消息
+        if task.status_message_id is not None:
+            try:
+                await self._app.bot.delete_message(
+                    chat_id=task.chat_id,
+                    message_id=task.status_message_id,
+                )
+            except Exception:
+                logger.debug("删除状态消息失败", exc_info=True)
+        logger.info("用户 %s Prompt 助手对话完成", task.user_id)
+
+    def _rollback_pending_user(self, session: dict, task: GenerationTask) -> None:
+        """回滚失败轮次追加的 user 消息（仅当它仍是历史最后一条时）。"""
+        history = session.get("history") or []
+        pending_index = task.settings.get("_chat_pending_index")
+        if pending_index is not None and pending_index == len(history) - 1:
+            history.pop()
+        else:
+            logger.warning("跳过 Prompt 助手消息回滚：用户 %s 第 %s 轮已被后续轮次覆盖",
+                           task.user_id, pending_index)
 
     async def _pipe_notify(self, chat_id: int, text: str):
         """Pipeline 中止通知（独立消息，不复用即将删除的状态消息）。"""
@@ -899,6 +1077,41 @@ def _escape_and_truncate(text: str, max_chars: int) -> str:
     不受 escape 膨胀（& → &amp; 等）影响。
     """
     return _truncate_escaped(html.escape(text), max_chars)
+
+
+def _truncate_chat_msg(text: str, max_chars: int = PROMPT_CHAT_MAX_MSG_LEN) -> str:
+    """Prompt 助手会话单条消息截断（防长文撑爆历史上下文）。"""
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rstrip() + "…"
+
+
+def _trim_chat_history(session: dict) -> None:
+    """会话历史裁剪：保留最近 PROMPT_CHAT_HISTORY_MAX_TURNS 轮（成对丢最旧）。"""
+    history = session.get("history") or []
+    while sum(1 for m in history if m.get("role") == "user") > PROMPT_CHAT_HISTORY_MAX_TURNS:
+        if history and history[0].get("role") == "user":
+            history.pop(0)
+        if history:
+            history.pop(0)
+
+
+_KREA2_EN_HEADER = "【Krea 2 英文提示词】"
+
+
+def _extract_krea2_en(reply: str) -> tuple[str, str] | None:
+    """解析 Krea 2 输出，返回 (英文提示词段, 其余文本)。解析失败返回 None。"""
+    idx = reply.find(_KREA2_EN_HEADER)
+    if idx < 0:
+        return None
+    tail = reply[idx + len(_KREA2_EN_HEADER):]
+    m = re.search(r"【[^】]+】", tail)
+    end = m.start() if m else len(tail)
+    en_part = tail[:end].strip()
+    if not en_part:
+        return None
+    rest = (reply[:idx] + tail[end:]).strip()
+    return en_part, rest
 
 
 def _build_sd_info(settings: dict, translated: str, seed: int, elapsed: float) -> str:

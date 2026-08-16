@@ -22,6 +22,7 @@ def _gen_action_row(context_id: str, is_video: bool) -> list[InlineKeyboardButto
     if not is_video:
         buttons.append(InlineKeyboardButton("🔍 反推提示词", callback_data="rev_prompt"))
         buttons.append(InlineKeyboardButton("🎰 灵感抽卡", callback_data="gacha:menu"))
+        buttons.append(InlineKeyboardButton("💬 Prompt 助手", callback_data="prompt_chat:menu"))
     buttons.append(InlineKeyboardButton("💾 记录", callback_data=f"log_gen_{context_id}"))
     return buttons
 

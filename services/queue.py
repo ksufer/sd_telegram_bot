@@ -25,7 +25,7 @@ from config import (
     PROMPT_CHAT_HISTORY_MAX_TURNS,
     PROMPT_CHAT_MAX_MSG_LEN,
 )
-from services import sd_api, comfy_api, credits, ollama_api
+from services import sd_api, comfy_api, credits, ollama_api, h3_prompt
 from services.network import is_network_error, retry_on_network_error
 from services.translator import translate
 from services.face_prompt import extract_face_prompt
@@ -674,13 +674,17 @@ class GenerationQueue:
         mode = session.get("mode", "t2i")
         nsfw = session.get("nsfw", True)
         history = session.get("history") or []
-        if mode == "krea2":
-            system = PROMPT_CHAT_SYSTEM_KREA2
-        else:
-            system = (PROMPT_CHAT_SYSTEM_T2I_NSFW if nsfw
-                      else PROMPT_CHAT_SYSTEM_T2I_SFW)
 
         try:
+            # 系统提示词选择（h3 技能文档缺失时在 try 内抛出，走统一退款）
+            if mode == "krea2":
+                system = PROMPT_CHAT_SYSTEM_KREA2
+            elif mode == "h3":
+                system = h3_prompt.get_h3_system_prompt()
+            else:
+                system = (PROMPT_CHAT_SYSTEM_T2I_NSFW if nsfw
+                          else PROMPT_CHAT_SYSTEM_T2I_SFW)
+
             # 先卸载 ComfyUI 模型释放显存；失败仅降级（Ollama 会 CPU offload 更多层）
             await updater.set_stage("正在清理显存...")
             try:
@@ -727,11 +731,16 @@ class GenerationQueue:
                 await credits.refund_one(task.user_id)
                 task.credit_charged = False
             self._rollback_pending_user(session, task)
-            await self._update_status(task, f"Prompt 助手调用失败: {str(e)[:200]}")
+            if mode == "h3" and isinstance(e, FileNotFoundError):
+                await self._update_status(
+                    task, "Prompt 助手调用失败：H3 技能文档缺失，"
+                    "请联系管理员检查 data/minimax-h3-prompt-generator/。")
+            else:
+                await self._update_status(task, f"Prompt 助手调用失败: {str(e)[:200]}")
             return
 
-        # 构建结果文本（T2I：全文 code 块；Krea 2：英文提示词段 code 块 + 其余转义）
-        title = "🛠 通用 T2I" if mode == "t2i" else "🎨 Krea 2"
+        # 构建结果文本（T2I/H3：全文 code 块；Krea 2：英文提示词段 code 块 + 其余转义）
+        title = {"t2i": "🛠 通用 T2I", "krea2": "🎨 Krea 2", "h3": "🎬 H3 视频"}.get(mode, mode)
         if mode == "t2i":
             title += " · 🔞 NSFW" if nsfw else " · 🟢 SFW"
         info = f"<b>💬 Prompt 助手</b>（{title}）\n\n"
@@ -742,16 +751,19 @@ class GenerationQueue:
             en_esc = _escape_and_truncate(en_part, min(len(en_part) + 40, budget // 2))
             rest_esc = _escape_and_truncate(rest, budget - len(en_esc))
             info += ("【Krea 2 英文提示词】\n"
-                     f"<code>{en_esc}</code>\n\n{rest_esc}")
+                     f"<code>{en_esc}</code>\n\n"
+                     f"<code>{rest_esc}</code>")
         else:
-            info += f"<code>{_escape_and_truncate(reply, 3500)}</code>"
+            # H3 结构化提示词较长（官方上限 7000 字符），放宽截断预算
+            budget = 3900 if mode == "h3" else 3500
+            info += f"<code>{_escape_and_truncate(reply, budget)}</code>"
         if task.credit_charged:
             remaining = await credits.get_remaining(task.user_id)
             info += f"\n<b>剩余额度:</b> {remaining}"
 
         reply_markup = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("🗑 清空会话", callback_data="prompt_chat:clear"),
+                InlineKeyboardButton("🗑 清空会话", callback_data="prompt_chat:clear_quiet"),
                 InlineKeyboardButton("❌ 退出对话", callback_data="prompt_chat:exit"),
             ],
         ])

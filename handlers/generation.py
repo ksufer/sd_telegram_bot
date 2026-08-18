@@ -900,15 +900,15 @@ async def handle_photo(update, context):
     else:
         _firstlast_frames = None
         _firstlast_prompt = None
-        # 单图视频工作流：无 caption/文件提示词且无缓存图 → 缓存图片等待文字
+        # 单图视频工作流：无 caption/文件提示词 → 缓存图片等待文字（有旧缓存则替换）
         # （Telegram caption 仅 1024 字符，文字可用足 4096）
         if (wf_config.get("output_type") == "video"
                 and wf_config.get("load_image_node") and not wf_config.get("load_image_nodes")):
             user_data = context.user_data
             caption = _clean_caption(message, context)
             file_prompt = (user_data or {}).get("_file_prompt", "")
-            if (not caption and not file_prompt and user_data is not None
-                    and not user_data.get("_firstlast_start_frame")):
+            replaced = bool(user_data) and bool(user_data.get("_firstlast_start_frame"))
+            if not caption and not file_prompt and user_data is not None:
                 try:
                     photo_file = await message.photo[-1].get_file()
                     image_bytes = io.BytesIO()
@@ -920,10 +920,16 @@ async def handle_photo(update, context):
                     await message.reply_text(f"上传图片失败: {e}")
                     return
                 user_data["_firstlast_start_frame"] = uploaded_name
-                await message.reply_text(
-                    "✅ 已收到图片，请发送描述文字作为提示词（支持长文本，也可发送 .txt 文件），"
-                    "发送 /cancel 可取消。"
-                )
+                if replaced:
+                    await message.reply_text(
+                        "✅ 已替换图片，请发送描述文字作为提示词（支持长文本，也可发送 .txt 文件），"
+                        "发送 /cancel 可取消。"
+                    )
+                else:
+                    await message.reply_text(
+                        "✅ 已收到图片，请发送描述文字作为提示词（支持长文本，也可发送 .txt 文件），"
+                        "发送 /cancel 可取消。"
+                    )
                 return
 
     # 额度检查

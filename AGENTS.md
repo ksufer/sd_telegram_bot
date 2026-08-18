@@ -55,13 +55,15 @@ codegraph affected [文件]    # 改动文件影响了哪些测试
 | `services/gacha.py` | 抽卡词库加载与抽词逻辑（`data/prompt_gacha.json`，按 mtime 缓存热生效；维度含 `skip_chance`/`nsfw_only`，词为 `{"en","zh"}`） |
 | `handlers/pipeline.py` | Pipeline 动态编排（主菜单「⛓ Pipeline」；步骤列表持久化在 `settings["pipeline_steps"]`，编排/增删/排序/运行） |
 | `handlers/rev_prompt.py` | 图片反推提示词交互（主菜单「🔍 反推提示词」；等待标记 `_waiting_input="rev_prompt"`，由 `handle_photo`/`handle_text` 顶部分发；扣 1 额度入队） |
-| `handlers/prompt_chat.py` | Ollama 对话式提示词生成（主菜单「💬 Prompt 助手」；模式 t2i/krea2 + 尺度 NSFW/SFW；多轮会话存 `bot_data["_prompt_chat"][user_id]`，历史仅文本、单条 ≤2000 字符、10 轮上限；任务 `backend="ollama_chat"` 走串行队列；等待标记 `_waiting_input="prompt_chat"`；每轮扣 1 额度，图片仅当前轮不入历史） |
+| `handlers/prompt_chat.py` | Ollama 对话式提示词生成（主菜单「💬 Prompt 助手」；模式 t2i/krea2/h3（MiniMax H3 视频提示词）+ 尺度 NSFW/SFW（仅 t2i）；多轮会话存 `bot_data["_prompt_chat"][user_id]`，历史仅文本、单条 ≤2000 字符、10 轮上限；任务 `backend="ollama_chat"` 走串行队列；等待标记 `_waiting_input="prompt_chat"`；每轮扣 1 额度，图片仅当前轮不入历史；结果消息「🗑 清空会话」仅清历史不编辑消息（`clear_quiet`）、「❌ 退出对话」保留内容消息并另发进入前的工作流说明页；krea2 结果英文与中文释义均包 `<code>` 可点按复制） |
 | `services/ollama_api.py` | Ollama 视觉模型反推（单次 `/api/chat` 同时产出 SD 标签词 + Krea 2 句子版 JSON；解析失败修复重试一次；请求 keep_alive 5m、think 默认开启（qwen3 系关闭思考会拒绝 NSFW，`OLLAMA_THINK=false` 可关）、结束显式卸载归还显存）+ `prompt_chat()` 对话式提示词生成（纯文本自由输出，可选附当前轮图片） |
+| `services/h3_prompt.py` | MiniMax H3 提示词生成 Skill 加载（`data/minimax-h3-prompt-generator/` 的 SKILL.md + 三份规范拼接为系统提示词，按 mtime 缓存热生效；供 Prompt 助手 h3 模式使用；`precision-rules.md` 自定义补正区已填写 NSFW 直白描述约定） |
 | `services/prompt_log.py` | 提示词日志（`data/prompt_log/<日期>/` 下每记录三件套：缩略图 jpg + 完整提示词 txt + 元数据 json；Admin Web 生成成功自动记录，Bot 端改为结果菜单「💾 记录」按钮按需落盘，失败仅记日志；收藏/删除供 Admin API 用） |
 
 ### 生成流程
 
 - `handlers/generation.py` 中 `handle_text()` / `handle_photo()` 通过 5 个辅助函数（`_check_and_charge_credit`、`_create_status_message`、`_download_tg_photo`、`_upload_to_comfy`、`_enqueue_and_notify`）消除重复代码，退款统一在调用方处理。
+- 单图视频工作流（minimax-h3-i2v）：无 caption/文件提示词的图片一律缓存到 `_firstlast_start_frame` 等待文字（重复发图覆盖旧缓存并提示「已替换」），绝不空提示词直接入队；带 caption 的图片仍直接生成。
 - `services/queue.py` 中 `_process_task()` 已拆分为 `_translate_prompt`、`_generate`、`_send_result`、`_cache_gen_context` 私有方法。
 - `services/comfy_api.py` 中 `_build_payload()` 已拆分为 8 个 `_apply_*` 函数。
 
@@ -96,11 +98,11 @@ codegraph affected [文件]    # 改动文件影响了哪些测试
 | ComfyUI | `COMFY_API_BASE`（默认 `10.126.126.4:8188`） | 1500s |
 | SD WebUI | `SD_API_BASE`（默认 `10.126.126.1:7860`） | 180s |
 | DeepSeek 翻译 | `DEEPSEEK_BASE_URL` | 默认 |
-| Ollama 反推 | `OLLAMA_BASE_URL`（默认 `10.126.126.4:11434`，模型 `OLLAMA_MODEL`） | `OLLAMA_TIMEOUT`（默认 900s） |
+| Ollama 本地模型（反推 / Prompt 助手） | `OLLAMA_BASE_URL`（默认 `10.126.126.4:11434`，模型 `OLLAMA_MODEL`） | `OLLAMA_TIMEOUT`（默认 900s） |
 
 - 翻译失败时静默降级为原文，不阻断生成。
 - 生成队列为全局串行，新任务自动排队。
-- Ollama 反推与 ComfyUI 共享 GPU（16G 显存）：反推任务走同一串行队列与生成互斥，执行前 `comfy_api.free_memory()` 卸载 ComfyUI 模型，结束后显式卸载 ollama 模型归还显存。
+- Ollama 反推/Prompt 助手与 ComfyUI 共享 GPU（16G 显存）：反推与对话任务走同一串行队列与生成互斥，执行前 `comfy_api.free_memory()` 卸载 ComfyUI 模型，结束后显式卸载 ollama 模型归还显存。
 
 ## Docker 启动
 
@@ -136,5 +138,6 @@ start.bat           # Windows 双击（对应 .bat 版本）
 - `.env` 只放敏感信息（token、key、地址），常量放在 `config.py`。
 - 新增工作流：在 `data/workflows/` 新建 schema_version=1 的注册配置（key 与文件名一致），并同步维护 `config.py` 中的回退默认值（`scripts/export_workflows.py` 的导出源）；ComfyUI workflow JSON 放入 `data/comfy_workflows/`。`data/workflows/` 与 `data/comfy_workflows/` 的改动热重载生效；`config.py` 默认值改动需重启进程。
 - 新增 handler 文件后，在 `bot.py` 中 import 并 `add_handlers()`，注意注册顺序。
+- Prompt 助手 h3 模式技能文档在 `data/minimax-h3-prompt-generator/`（gitignore 的 `data/` 下，用 `git add -f` 纳入版本管理）；新增/修改需同步该目录与 `services/h3_prompt.py` 的 `_SKILL_FILES`。
 - 模型更新无需改配置：生成时 `comfy_api.resolve_model()` 对照 ComfyUI 实时模型列表解析，链为「用户 comfy_model → `default_model` → 家族最新（自然排序；可选 `default_model_pattern` glob 覆盖，默认从 `default_model` 剥离尾部版本号推导前缀）→ 列表第一个」。模型列表有 60s TTL 缓存（失败 15s）。
 - 配置变更不需要重启即可生效（`load_dotenv()` 在 `config.py` import 时执行，但环境变量需重启容器才能更新）。

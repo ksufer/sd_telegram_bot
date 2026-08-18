@@ -25,7 +25,7 @@ DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 
 # ---- Ollama 本地大模型（图片反推提示词）----
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://10.126.126.4:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "huihui_ai/qwen3.6-abliterated:27b")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "huihui_ai/Qwen3.8-abliterated:latest")
 OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "900"))
 # qwen3 系模型关闭思考会直接拒绝 NSFW 输出，默认开启；可设 OLLAMA_THINK=false 关闭
 OLLAMA_THINK = os.getenv("OLLAMA_THINK", "true").lower() == "true"
@@ -899,6 +899,8 @@ REV_PROMPT_SYSTEM = """你是一名专业的 AI 图像反推提示词专家，�
 
 请根据用户上传的参考图片，严格反推出两种可用于文生图的英文提示词，目标是让生成图尽可能复现参考图。只允许描述图片中实际可见或可由画面直接推断的信息，不要自由创作，不要添加无关元素，不要遗漏会影响复现效果的关键细节。
 
+如果用户要求生成NSFW的内容，对于人体隐私部位的描写要直接，可以使用：胸部、乳头、乳晕、阴蒂、阴唇、阴茎、阴毛、肛门等，动作也要描述清楚，不能含糊委婉。
+
 如果用户的请求中附带「额外要求」（如风格转换、写实化、增删元素、调整人物特征），额外要求优先于上述严格复现原则，请在两种提示词中体现这些要求；没有额外要求时才严格按图反推。
 
 请重点检查并写清：
@@ -945,6 +947,7 @@ PROMPT_CHAT_SYSTEM_KREA2 = """你是一名专业的 AI 生图提示词设计师�
 9. 不要使用艺术家姓名模仿其在世风格，改用具体的视觉特征描述。
 10. 提供参考图片时，严格忠实于图片中实际可见的主体、动作、服装、环境与构图，
     只补充拍摄参数与画面质感，不要虚构图片中没有的元素。
+11.如果用户要求生成NSFW的内容，对于人体隐私部位的描写要直接，可以使用：胸部、乳头、乳晕、阴蒂、阴唇、阴茎、阴毛、肛门等，动作也要描述清楚，不能含糊委婉。
 
 最终只输出以下内容，不要输出任何其他内容：
 

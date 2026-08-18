@@ -56,7 +56,7 @@ codegraph affected [文件]    # 改动文件影响了哪些测试
 | `handlers/pipeline.py` | Pipeline 动态编排（主菜单「⛓ Pipeline」；步骤列表持久化在 `settings["pipeline_steps"]`，编排/增删/排序/运行） |
 | `handlers/rev_prompt.py` | 图片反推提示词交互（主菜单「🔍 反推提示词」；等待标记 `_waiting_input="rev_prompt"`，由 `handle_photo`/`handle_text` 顶部分发；扣 1 额度入队） |
 | `handlers/prompt_chat.py` | Ollama 对话式提示词生成（主菜单「💬 Prompt 助手」；模式 t2i/krea2 + 尺度 NSFW/SFW；多轮会话存 `bot_data["_prompt_chat"][user_id]`，历史仅文本、单条 ≤2000 字符、10 轮上限；任务 `backend="ollama_chat"` 走串行队列；等待标记 `_waiting_input="prompt_chat"`；每轮扣 1 额度，图片仅当前轮不入历史） |
-| `services/ollama_api.py` | Ollama 视觉模型反推（单次 `/api/chat` 同时产出 SD 标签词 + Krea 2 句子版 JSON；解析失败修复重试一次；请求 keep_alive 5m、结束显式卸载归还显存）+ `prompt_chat()` 对话式提示词生成（纯文本自由输出，可选附当前轮图片） |
+| `services/ollama_api.py` | Ollama 视觉模型反推（单次 `/api/chat` 同时产出 SD 标签词 + Krea 2 句子版 JSON；解析失败修复重试一次；请求 keep_alive 5m、think 默认开启（qwen3 系关闭思考会拒绝 NSFW，`OLLAMA_THINK=false` 可关）、结束显式卸载归还显存）+ `prompt_chat()` 对话式提示词生成（纯文本自由输出，可选附当前轮图片） |
 | `services/prompt_log.py` | 提示词日志（`data/prompt_log/<日期>/` 下每记录三件套：缩略图 jpg + 完整提示词 txt + 元数据 json；Admin Web 生成成功自动记录，Bot 端改为结果菜单「💾 记录」按钮按需落盘，失败仅记日志；收藏/删除供 Admin API 用） |
 
 ### 生成流程

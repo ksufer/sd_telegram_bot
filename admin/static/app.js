@@ -509,6 +509,14 @@ function buildParamControl(key, wf, allKeys) {
       return buildNumberField("Krea2 LoRA 强度", "comfy_krea2_lora_strength",
         { min: -15, max: 10 });
 
+    case "comfy_krea2_lora_name":
+      return buildTextareaField("Krea2 LoRA 模型", "comfy_krea2_lora_name",
+        "留空使用工作流默认；Bot 端自动补全 .safetensors");
+
+    case "comfy_krea2_lora_trigger":
+      return buildTextareaField("Krea2 LoRA 触发词", "comfy_krea2_lora_trigger",
+        "留空无触发词");
+
     case "comfy_lora_variant":
       return buildSelectField("LoRA 变体", Object.entries(LORA_VARIANTS),
         s.comfy_lora_variant, (v) => {

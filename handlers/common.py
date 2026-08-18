@@ -34,4 +34,8 @@ async def reply_menu(query, text: str, markup):
         if "not modified" in str(e).lower():
             return
         await safe_answer(query)
-        await query.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
+        try:
+            await query.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
+        except Exception:
+            # 兜底回复也可能失败（如键盘超限/消息已删除），记录即可，不抛未捕获异常
+            logger.warning("菜单编辑失败后的兜底回复也失败", exc_info=True)

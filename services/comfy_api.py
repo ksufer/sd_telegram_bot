@@ -343,6 +343,22 @@ def _apply_lora(workflow: dict, wf_config: dict, settings: dict,
         lora_enabled = settings.get("comfy_krea2_lora_enabled", False)
         _set_node_input(workflow, wf_config["lora_enable_node"],
                         wf_config["lora_enable_key"], lora_enabled)
+        # 模型名：用户设置非空才覆盖（空 = 沿用工作流内默认 LoRA）
+        if "lora_name_node" in wf_config:
+            name = (settings.get("comfy_krea2_lora_name") or "").strip()
+            if name:
+                # 防御性补全扩展名（admin 面板保存的名称不经过 Bot 输入补全）
+                if not name.lower().endswith(_MODEL_EXTS):
+                    name += ".safetensors"
+                _set_node_input(workflow, wf_config["lora_name_node"],
+                                wf_config["lora_name_key"], name)
+        # 触发词：始终显式注入（空则空串）。LoRA 关闭时该节点支路被开关旁路，
+        # 注入空串仅作防御性清理，避免触发词残留
+        if "lora_trigger_node" in wf_config:
+            trigger = ((settings.get("comfy_krea2_lora_trigger") or "").strip()
+                       if lora_enabled else "")
+            _set_node_input(workflow, wf_config["lora_trigger_node"],
+                            wf_config["lora_trigger_key"], trigger)
     if "lora_strength_node" in wf_config:
         strength = max(-15, min(10, settings.get("comfy_krea2_lora_strength", 5)))
         _set_node_input(workflow, wf_config["lora_strength_node"],
@@ -588,6 +604,14 @@ async def get_models(settings: dict) -> list[str]:
     if models is None:
         raise ComfyApiError("无法从 ComfyUI 获取模型列表（详见上方 warning）")
     return models
+
+
+async def get_lora_models() -> list[str] | None:
+    """从 /object_info 获取可用 LoRA 列表（带 TTL 缓存）。失败返回 None，不抛异常。
+
+    供 krea2 自定义 LoRA 文件名输入校验使用（None = 服务不可达，调用方放行）。
+    """
+    return await _fetch_models("LoraLoaderModelOnly", "lora_name")
 
 
 _VERSION_SUFFIX_RE = re.compile(r"(?:[_-]?[Vv]?\d[\d.]*)+$")

@@ -17,7 +17,8 @@ NODE_FIELDS = [
     "upscale_switch_node", "pussydetailer_switch_node",
     "facedetailer_switch_node",
     "sd_upscale_node", "sd_upscale_prompt_node",
-    "lora_node", "lora_enable_node", "lora_strength_node",
+    "lora_node", "lora_enable_node", "lora_name_node",
+    "lora_strength_node", "lora_trigger_node",
     "detailer_prompt_node", "face_detailer_prompt_node",
     "facedetailer_seed_node",
 ]
@@ -95,6 +96,8 @@ def _check_nodes(comfy_cfg: dict, wf_json: dict, report: list = None) -> list:
         "sd_upscale_prompt_node": "sd_upscale_prompt_key",
         "lora_strength_node": "lora_strength_key",
         "lora_enable_node": "lora_enable_key",
+        "lora_name_node": "lora_name_key",
+        "lora_trigger_node": "lora_trigger_key",
         "detailer_prompt_node": "detailer_prompt_key",
         "face_detailer_prompt_node": "face_detailer_prompt_key",
         "facedetailer_seed_node": "facedetailer_seed_key",

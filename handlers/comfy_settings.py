@@ -158,15 +158,24 @@ def _add_middle_rows(keyboard: list, info_lines: list,
         info_lines.append(" | ".join(toggle_text_parts))
         keyboard.append(toggle_row)
 
-    # krea2 LoRA 开关 + 强度
+    # krea2 LoRA 开关 + 模型 + 触发词 + 强度
     if wf_config.get("lora_enable_node") and "comfy_krea2_lora_enabled" in uc:
         lora_on = settings.get("comfy_krea2_lora_enabled", False)
+        lora_name = (settings.get("comfy_krea2_lora_name") or "").strip()
+        lora_trigger = (settings.get("comfy_krea2_lora_trigger") or "").strip()
         lora_strength = settings.get("comfy_krea2_lora_strength", 5)
-        lora_label = "🧬" if lora_on else "🧬✖"
-        info_lines.append(f"LoRA: {'ON' if lora_on else 'OFF'} | 强度: {lora_strength}")
+        name_label = _escape_and_truncate(lora_name, 20) if lora_name else "工作流默认"
+        trigger_label = _escape_and_truncate(lora_trigger, 20) if lora_trigger else "无"
+        info_lines.append(
+            f"LoRA: {'ON' if lora_on else 'OFF'} | 模型: {name_label}"
+            f" | 触发词: {trigger_label} | 强度: {lora_strength}"
+        )
         keyboard.append([
-            InlineKeyboardButton(lora_label, callback_data="comfy_krea2_lora_toggle"),
-            InlineKeyboardButton(f"📊 LoRA强度({lora_strength})",
+            InlineKeyboardButton("🧬" if lora_on else "🧬✖",
+                                 callback_data="comfy_krea2_lora_toggle"),
+            InlineKeyboardButton("📖 LoRA列表", callback_data="comfy_krea2_lora_pick"),
+            InlineKeyboardButton("🔤 触发词", callback_data="comfy_krea2_lora_trigger"),
+            InlineKeyboardButton(f"📊 强度({lora_strength})",
                                  callback_data="comfy_krea2_lora_strength"),
         ])
 
@@ -371,6 +380,118 @@ async def pick_comfy_model(update, context):
     _save_settings(context, user_id)
 
     await safe_answer(query, f"模型: {model_name}")
+    text, markup = _comfy_settings_menu(settings)
+    await reply_menu(query, text, markup)
+
+
+async def show_comfy_krea2_lora_menu(update, context):
+    """扫描 ComfyUI 已安装 LoRA 并显示选择菜单（分页，防止键盘超限）。"""
+    query = update.callback_query
+    await safe_answer(query)
+    user_id = get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+
+    loras = await comfy_api.get_lora_models()
+    if loras is None:
+        await query.edit_message_text(
+            "无法获取 ComfyUI LoRA 列表，请确认 ComfyUI 服务是否在线。",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔙 返回主菜单", callback_data="main_menu"),
+            ]]),
+        )
+        return
+
+    # 暂存列表供 pick 使用（callback data 用索引，规避 64 字节限制）
+    context.user_data["_comfy_loras"] = loras
+
+    text, markup = _build_krea2_lora_menu(settings, loras, 0)
+    await reply_menu(query, text, markup)
+
+
+# 每页 LoRA 按钮数（Telegram 单键盘最多 100 按钮，留出导航/返回行余量）
+_KREA2_LORA_PAGE_SIZE = 10
+
+
+def _build_krea2_lora_menu(settings: dict, loras: list, page: int) -> tuple[str, InlineKeyboardMarkup]:
+    """构建 LoRA 选择菜单（含分页导航与当前选择标记）。"""
+    current = (settings.get("comfy_krea2_lora_name") or "").strip()
+    total_pages = max(1, (len(loras) + _KREA2_LORA_PAGE_SIZE - 1) // _KREA2_LORA_PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    start = page * _KREA2_LORA_PAGE_SIZE
+    end = min(start + _KREA2_LORA_PAGE_SIZE, len(loras))
+
+    text = f"<b>选择 LoRA</b>（第 {page + 1}/{total_pages} 页，共 {len(loras)} 个）\n当前: "
+    text += f"<code>{html.escape(current)}</code>" if current else "工作流默认"
+
+    keyboard = []
+    for i in range(start, end):
+        name = loras[i]
+        # 按钮文案上限 64 字符，超长截断（选择仍按索引，无功能损失）
+        label = name if len(name) <= 60 else name[:57] + "…"
+        prefix = "✓ " if name == current else ""
+        keyboard.append([InlineKeyboardButton(
+            f"{prefix}{label}", callback_data=f"comfy_krea2_lora_pick:{i}")])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(
+            "⬅️ 上一页", callback_data=f"comfy_krea2_lora_page:{page - 1}"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton(
+            "➡️ 下一页", callback_data=f"comfy_krea2_lora_page:{page + 1}"))
+    if nav:
+        keyboard.append(nav)
+    if current:
+        keyboard.append([InlineKeyboardButton(
+            "♻️ 恢复工作流默认", callback_data="comfy_krea2_lora_pick:default")])
+    keyboard.append([InlineKeyboardButton("🔙 返回主菜单", callback_data="main_menu")])
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+async def show_comfy_krea2_lora_page(update, context):
+    """LoRA 列表翻页。"""
+    query = update.callback_query
+    await safe_answer(query)
+    user_id = get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    loras = context.user_data.get("_comfy_loras")
+    if loras is None:
+        await safe_answer(query, "LoRA 列表已过期，请重新打开列表", show_alert=True)
+        return
+    try:
+        page = int(query.data.split(":", 2)[2])
+    except (IndexError, ValueError):
+        await safe_answer(query, "无效页码", show_alert=True)
+        return
+    text, markup = _build_krea2_lora_menu(settings, loras, page)
+    await reply_menu(query, text, markup)
+
+
+async def pick_comfy_krea2_lora(update, context):
+    """按索引选择 LoRA（或恢复工作流默认）。"""
+    query = update.callback_query
+    user_id = get_user_id(update)
+    settings = _ensure_settings(context, user_id)
+    payload = query.data.split(":", 2)[2]
+
+    if payload == "default":
+        settings["comfy_krea2_lora_name"] = ""
+        _save_settings(context, user_id)
+        await safe_answer(query, "已恢复为工作流默认 LoRA")
+    else:
+        loras = context.user_data.get("_comfy_loras", [])
+        try:
+            idx = int(payload)
+            if not 0 <= idx < len(loras):
+                raise IndexError
+            lora_name = loras[idx]
+        except (IndexError, ValueError):
+            await safe_answer(query, "LoRA 列表已变化，请重新打开列表", show_alert=True)
+            return
+        settings["comfy_krea2_lora_name"] = lora_name
+        _save_settings(context, user_id)
+        await safe_answer(query, f"LoRA: {lora_name}")
+
     text, markup = _comfy_settings_menu(settings)
     await reply_menu(query, text, markup)
 
@@ -815,6 +936,21 @@ async def start_comfy_krea2_lora_strength(update, context):
     )
 
 
+async def start_comfy_krea2_lora_trigger(update, context):
+    """进入 LoRA 触发词输入模式"""
+    query = update.callback_query
+    if context.user_data is None:
+        await safe_answer(query, "会话已过期，请重新发送 /start")
+        return
+    context.user_data["_waiting_input"] = "comfy_krea2_lora_trigger"
+    await safe_answer(query, "请输入 LoRA 触发词")
+    await query.message.reply_text(
+        "请输入该 LoRA 的触发词（会拼接到提示词末尾）：\n"
+        "• 回复「清除」可清空已设置的触发词\n"
+        "• 发送 /cancel 取消操作"
+    )
+
+
 # ═══ Handler 注册 ═══
 
 def get_handlers() -> list:
@@ -868,6 +1004,14 @@ def get_handlers() -> list:
                              pattern=r"^comfy_krea2_lora_toggle$"),
         CallbackQueryHandler(auth_callback(_make_toggle_handler("comfy_krea2_lora_enabled", False, "Krea2 LoRA", fast=True)),
                              pattern=r"^comfy_krea2_lora_toggle_gen$"),
+        CallbackQueryHandler(auth_callback(start_comfy_krea2_lora_trigger),
+                             pattern=r"^comfy_krea2_lora_trigger$"),
+        CallbackQueryHandler(auth_callback(show_comfy_krea2_lora_menu),
+                             pattern=r"^comfy_krea2_lora_pick$"),
+        CallbackQueryHandler(auth_callback(show_comfy_krea2_lora_page),
+                             pattern=r"^comfy_krea2_lora_page:\d+$"),
+        CallbackQueryHandler(auth_callback(pick_comfy_krea2_lora),
+                             pattern=r"^comfy_krea2_lora_pick:(default|\d+)$"),
         # 提示词优化三态循环（off → nsfw → sfw）
         CallbackQueryHandler(auth_callback(_make_cycle_handler()),
                              pattern=r"^comfy_prompt_optimize_cycle$"),

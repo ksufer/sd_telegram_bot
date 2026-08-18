@@ -27,6 +27,8 @@ DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://10.126.126.4:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "huihui_ai/qwen3.6-abliterated:27b")
 OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "900"))
+# qwen3 系模型关闭思考会直接拒绝 NSFW 输出，默认开启；可设 OLLAMA_THINK=false 关闭
+OLLAMA_THINK = os.getenv("OLLAMA_THINK", "true").lower() == "true"
 
 # ---- ComfyUI API ----
 COMFY_API_BASE = os.getenv("COMFY_API_BASE", "http://10.126.126.4:8188")
@@ -80,7 +82,7 @@ _DEFAULT_WORKFLOW_REGISTRY = [
         "how_to": (
             "直接发送描述词即可\n"
             "例如：古力娜扎，长发，连衣裙，室外\n\n"
-            "可在 ComfyUI 设置中配置 LoRA 开关/强度、脸部精修"
+            "可在 ComfyUI 设置中配置 LoRA 模型/触发词/强度、脸部精修"
         ),
         "backend": "comfyui",
         "comfy_workflow": "krea2",
@@ -207,7 +209,7 @@ _DEFAULT_WORKFLOW_REGISTRY = [
         "how_to": (
             "直接发送描述词即可\n"
             "例如：古力娜扎，长发，连衣裙，室外\n\n"
-            "可在 ComfyUI 设置中配置提示词优化开关"
+            "可在 ComfyUI 设置中配置 LoRA、提示词优化开关"
         ),
         "backend": "comfyui",
         "comfy_workflow": "moody-krea2",
@@ -325,8 +327,12 @@ _DEFAULT_COMFY_WORKFLOWS = {
         # LoRA
         "lora_enable_node": "81",
         "lora_enable_key": "value",
+        "lora_name_node": "78",
+        "lora_name_key": "lora_name",
         "lora_strength_node": "78",
         "lora_strength_key": "strength_model",
+        "lora_trigger_node": "83",
+        "lora_trigger_key": "string_b",
         # Upscale 开关
         "upscale_switch_node": "57",
         "upscale_switch_key": "image",
@@ -510,6 +516,15 @@ _DEFAULT_COMFY_WORKFLOWS = {
         "height_node": "698",
         "height_key": "height",
         "default_model": "moodyKrea2Mix_v50.safetensors",
+        # LoRA（同 krea2：模型通路 881 开关 + 触发词通路 875 开关，均受 880 控制）
+        "lora_enable_node": "880",
+        "lora_enable_key": "value",
+        "lora_name_node": "854",
+        "lora_name_key": "lora_name",
+        "lora_strength_node": "854",
+        "lora_strength_key": "strength_model",
+        "lora_trigger_node": "876",
+        "lora_trigger_key": "string_b",
         # 提示词优化（Refine Prompt? → TextGenerate）
         "prompt_optimize_node": "870",
         "prompt_optimize_key": "value",
@@ -606,7 +621,12 @@ def _infer_user_configurable(comfy: dict) -> list[str]:
     if comfy.get("face_detailer_prompt_node"):
         items.append("comfy_face_prompt")
     if comfy.get("lora_enable_node"):
-        items.extend(["comfy_krea2_lora_enabled", "comfy_krea2_lora_strength"])
+        items.extend([
+            "comfy_krea2_lora_enabled",
+            "comfy_krea2_lora_name",
+            "comfy_krea2_lora_trigger",
+            "comfy_krea2_lora_strength",
+        ])
     if comfy.get("prompt_optimize_node"):
         items.append("comfy_prompt_optimize")
     if comfy.get("sd_upscale_prompt_node"):
@@ -1103,6 +1123,8 @@ DEFAULT_USER_SETTINGS = {
     "comfy_facedetailer_enabled": True,
     "comfy_face_prompt": "",  # 空=自动提取，非空=手动覆盖
     "comfy_krea2_lora_enabled": False,
+    "comfy_krea2_lora_name": "",  # 空 = 沿用工作流内默认 LoRA
+    "comfy_krea2_lora_trigger": "",  # 空 = 无触发词
     "comfy_krea2_lora_strength": 5,
     "comfy_prompt_optimize": "nsfw",
     # 灵感抽卡

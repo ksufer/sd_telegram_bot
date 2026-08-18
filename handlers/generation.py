@@ -205,6 +205,9 @@ async def handle_text(update, context):
         elif waiting == "comfy_krea2_lora_strength":
             await _handle_krea2_lora_strength_input(update, context)
             return
+        elif waiting == "comfy_krea2_lora_trigger":
+            await _handle_krea2_lora_trigger_input(update, context)
+            return
         elif waiting == "pipe_collect":
             # 延迟 import 避免循环（pipeline 依赖本模块的辅助函数）
             from handlers.pipeline import handle_pipe_collect_text
@@ -488,6 +491,26 @@ async def _handle_krea2_lora_strength_input(update, context):
     context.user_data["_waiting_input"] = None
     _save_settings(context, user_id)
     await update.message.reply_text(f"LoRA 强度已设置为: {strength}")
+    txt, markup = _comfy_settings_menu_shim(settings)
+    await update.message.reply_text(txt, reply_markup=markup, parse_mode="HTML")
+
+
+async def _handle_krea2_lora_trigger_input(update, context):
+    """LoRA 触发词输入：保存原文，回复「清除」清空。"""
+    user_id = update.effective_user.id
+    settings = _ensure_settings(context, user_id)
+    text = update.message.text.strip()
+
+    if text.lower() == "清除":
+        settings["comfy_krea2_lora_trigger"] = ""
+        _save_settings(context, user_id)
+        context.user_data["_waiting_input"] = None
+        await update.message.reply_text("已清除 LoRA 触发词。")
+    else:
+        settings["comfy_krea2_lora_trigger"] = text[:100]
+        _save_settings(context, user_id)
+        context.user_data["_waiting_input"] = None
+        await update.message.reply_text(f"✅ LoRA 触发词已设置：{text[:100]}")
     txt, markup = _comfy_settings_menu_shim(settings)
     await update.message.reply_text(txt, reply_markup=markup, parse_mode="HTML")
 

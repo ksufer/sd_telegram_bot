@@ -14,7 +14,7 @@ import logging
 import httpx
 from PIL import Image
 
-from config import OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT, REV_PROMPT_SYSTEM
+from config import OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT, OLLAMA_THINK, REV_PROMPT_SYSTEM
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,8 @@ async def _chat(client: httpx.AsyncClient, messages: list,
         "model": OLLAMA_MODEL,
         "messages": messages,
         "stream": False,
-        "think": False,
+        # qwen3 系模型关闭思考会直接拒绝 NSFW 输出，必须开启
+        "think": OLLAMA_THINK,
         # 保持模型常驻以便失败重试时免于重新加载 17GB；调用结束后显式卸载
         "keep_alive": "5m",
         "options": {"temperature": temperature},
@@ -98,10 +99,14 @@ async def _chat(client: httpx.AsyncClient, messages: list,
 async def _unload_model(client: httpx.AsyncClient) -> None:
     """显式卸载模型，归还显存给 ComfyUI。失败仅告警（调用方继续）。"""
     try:
-        await client.post("/api/generate", json={
+        resp = await client.post("/api/generate", json={
             "model": OLLAMA_MODEL,
             "keep_alive": 0,
         })
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("done_reason") != "unload":
+            logger.warning("Ollama 卸载未完成: done_reason=%s", data.get("done_reason"))
     except Exception:
         logger.warning("Ollama 模型卸载失败（下次生成前 ComfyUI 可能 OOM）", exc_info=True)
 
